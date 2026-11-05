@@ -1,0 +1,25 @@
+# Local credentials/configuration; never store secrets in this repository.
+.env
+.env.*
+!.env.example
+*.local
+*.local.*
+secrets/
+credentials/
+.credentials/
+*.pem
+*.key
+
+# Runtime/user data and later build products.
+.feishu-mcp/
+.better-feishu-mcp/
+.runtime/
+.cache/
+logs/
+*.log
+tokens/
+node_modules/
+dist/
+coverage/
+.DS_Store
+*.tgz

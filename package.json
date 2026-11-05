@@ -1,0 +1,29 @@
+{
+  "name": "better-feishu-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local, user-identity Feishu MCP: message reads and safe Docs CRUD.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=24 <25" },
+  "bin": { "better-feishu-mcp": "dist/cli.js" },
+  "files": ["dist", "README.md", "SECURITY.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && vitest run",
+    "test:auth-harness": "node --test scripts/validation-auth.test.ts",
+    "test:stdio": "node scripts/stdio-smoke.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.4.0",
+    "@napi-rs/keyring": "2.1.2",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
+    "@types/node": "24.10.0",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}
