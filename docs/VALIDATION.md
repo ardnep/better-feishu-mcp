@@ -8,6 +8,12 @@ The built CLI completed identity-bound OAuth and stored credentials in the macOS
 
 Token-free result: `.runtime/mcp-stdio-live.json`. Credential-free smoke evidence: `.runtime/mcp-stdio-smoke.json`. A separate real macOS keychain write/read/delete probe passed. See [implementation](IMPLEMENTATION.md), [setup](review/setup.html) and [security boundaries](../SECURITY.md). The trusted fixture runner explicitly signs only its own newly created test-document operations; it is not evidence of cryptographic human presence.
 
+### Attachment implementation — 2026-11-05
+
+Attachment metadata is now included in message reads, with `messages_read_attachment` for UTF-8 text/code, raster images, PDF text and DOCX text. Automated coverage exercises message/resource binding, visibility-scope checks, fixed-origin user-token downloads, JSON error sanitization, byte limits, encoding errors, malformed/oversized documents, parser cancellation, and actual PDF/DOCX fixtures. A real SDK stdio client discovers the new tool and reads synthetic text/native-image attachments; incorrect keys and path-like input are rejected.
+
+Validation: `npm run check`, `npm test` (40 tests), `npm run test:auth-harness` (5 tests), `npm run test:stdio`, and `npm audit --omit=dev` (zero known vulnerabilities). This does **not** establish live Feishu resource access: live attachment reads were not exercised, and no attachments were uploaded/sent for this change. No new scopes or client configuration changes were made. Reconnect/restart the MCP process after rebuilding.
+
 ## Verified
 
 | Capability | Live evidence |

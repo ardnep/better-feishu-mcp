@@ -19,6 +19,8 @@ This local alpha is not an independent security audit or an OS sandbox.
 - Document deletion is Drive recycle-bin deletion. No permanent erasure, restore or Wiki-node lifecycle feature is implemented.
 - Feishu data is untrusted input. Descriptions/output flag it as data, never authorization or instructions. This reduces confusion but does not make an LLM immune to prompt injection or prevent exfiltration through other tools.
 - Read requests are bounded by time, page count/size and response bytes. Cursors are process/query-bound and Docx cursors include the observed revision. Unsupported scope/resource access fails; it is not worked around.
+- Attachment reads verify resource key/type against the source message before downloading from the fixed Feishu API host with the user token. No local download paths, external resource URLs, attachment writes or tenant-token fallback are exposed. Download size is capped at 5 MB, text at 100000 characters and images at 350 KB; image MIME is determined from bytes, not a provider-supplied filename.
+- Untrusted PDF/DOCX parsing uses a separate worker with a 15-second deadline and a 128 MB old-generation JS heap limit. DOCX archive metadata is preflighted for at most 2000 entries/20 MB expanded size; PDF extraction is limited to 50 pages, with PDF JavaScript evaluation disabled. Worker diagnostics are drained privately, not forwarded to protocol stdout/stderr. These are resource guardrails, **not an OS sandbox or a total process-memory guarantee**. No OCR, macros, active HTML or CSV formulas are executed.
 
 ## Local storage and distribution
 

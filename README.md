@@ -88,11 +88,35 @@ Client configuration formats differ; the important fields are command, args and 
 | `messages_history` | Recent group or p2p history with explicit chat ID and visibility |
 | `threads_history` | Replies for an explicit thread ID |
 | `messages_get` | Retrieve an individual message |
+| `messages_read_attachment` | Read a message attachment as text or a native image |
 | `documents_get` | Modern Docx metadata and revision |
 | `documents_read` | Plain text capped at 100000 characters |
 | `documents_blocks` | Structured blocks with opaque, revision-bound cursors |
 
 Group history/get/search have passed live tests in the sole-user fixture chat with bot absence verified in the Feishu UI. P2p, thread and normal multi-person group cases remain unverified; scope support does not override tenant or resource restrictions.
+
+### Message attachments
+
+Message get/history/thread/search results now include an `attachments` array, while preserving the raw message body. Search snippets may omit resource keys: fetch the full message with `messages_get` first in that case. Pass the attachment's exact `resourceKey` and `type`, plus its `messageId` and `visibility`, to `messages_read_attachment`:
+
+```json
+{
+  "messageId": "om_MESSAGE_ID",
+  "visibility": "group",
+  "resourceKey": "file_RESOURCE_KEY",
+  "type": "file"
+}
+```
+
+- UTF-8 text/code, Markdown, CSV, JSON, XML and HTML return plain text; nothing is executed or rendered as active HTML.
+- PDF and DOCX files return extracted plain text, not their original layout. PDF extraction reads at most 50 pages; scanned PDFs require OCR, which is not provided.
+- PNG, JPEG, GIF and WebP return native MCP image content for image-capable clients/models. Use `type: "image"` for image resources.
+- Downloads are capped at 5 MB, text at 100000 characters and inline images at 350 KB. Truncated text/page results are marked. Oversized resources fail explicitly rather than being saved to disk.
+- Unsupported formats (including spreadsheets, presentations, archives, audio/video and stickers) fail explicitly. No automatic downloads, local paths, OCR, transcription or attachment uploads.
+
+Each read re-fetches the source message to verify the resource key/type. It uses the existing message-read scopes and **only your user token**; resource ACLs and tenant policy can still deny access. All attachment contents are untrusted data. PDF/DOCX parsing runs in a time/heap-limited worker, not an OS sandbox.
+
+Attachment functionality is covered by synthetic API tests, actual PDF/DOCX parsing fixtures and real MCP stdio tests; **live Feishu attachment access is not yet validated**. After rebuilding, reconnect/restart your MCP client/server to discover the new tool.
 
 ### Document writes
 
