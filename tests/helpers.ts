@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -20,7 +20,7 @@ export class MemoryStore implements CredentialStore {
 }
 export async function setup(writes = true) {
   const base = join(tmpdir(), 'opencode'); await mkdir(base, { recursive: true });
-  const stateDir = await mkdtemp(join(base, 'better-feishu-tests-'));
+  const stateDir = await realpath(await mkdtemp(join(base, 'better-feishu-tests-')));
   const config: Settings = { profile: 'test', stateDir, writes };
   return { config, cleanup: () => rm(stateDir, { recursive: true, force: true }) };
 }

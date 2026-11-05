@@ -30,8 +30,9 @@ export const BASE_SCOPES = [
   'search:message', 'im:chat:read', 'im:message:readonly',
   'im:message.group_msg:get_as_user', 'im:message.p2p_msg:get_as_user',
   'docx:document:readonly', 'docx:document:create', 'docx:document:write_only', 'space:document:delete',
+  'sheets:spreadsheet:readonly',
 ] as const;
-export type AuthMode = 'pkce' | 'confidential';
+export type AuthMode = 'confidential';
 export type Settings = Readonly<{ profile: string; stateDir: string; writes: boolean }>;
 export function settings(env: NodeJS.ProcessEnv = process.env): Settings {
   return Object.freeze({ profile: profileSchema.parse(env.BETTER_FEISHU_MCP_PROFILE ?? 'default'),

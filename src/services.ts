@@ -11,7 +11,7 @@ const raw = z.object({ content: z.string() });
 export const contentSchema = z.array(z.union([z.object({
   type: z.enum(['paragraph', 'heading', 'bullet', 'ordered', 'quote', 'code']),
   text: z.string().min(1).max(10_000), level: z.number().int().min(1).max(6).optional(),
-}).strict(), imageBlockSchema])).min(1).max(100)
+}).strict(), imageBlockSchema])).min(1).max(50)
   .refine(blocks => blocks.reduce((n, b) => n + (b.type === 'image' ? b.caption?.length ?? 0 : b.text.length), 0) <= 32_000, 'Total content limit is 32000 characters.')
   .refine(blocks => blocks.filter(b => b.type === 'image').length <= 10, 'At most ten images are allowed.');
 export type Content = z.infer<typeof contentSchema>;
@@ -128,7 +128,7 @@ export class Documents {
   }
   private checkImages(content: Content | undefined, images?: LoadedImages) {
     for (const block of content ?? []) if (block.type === 'image' && !images?.has(block.path)) {
-      throw new AppError('INVALID_IMAGE', 'Image bytes must be verified by the approved operation before document mutation.');
+      throw new AppError('INVALID_IMAGE', 'Image bytes must be verified by the write operation before document mutation.');
     }
   }
   private async append(id: string, content: Content, revision: number, signal?: AbortSignal, images?: LoadedImages) {

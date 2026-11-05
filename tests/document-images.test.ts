@@ -60,6 +60,29 @@ it('creates an interleaved image only after exact approval, with proper upload b
     await expect(f.operations.commit(draft.operationId)).rejects.toMatchObject({ kind: 'OPERATION_NOT_FOUND' });
   } finally { await f.cleanup(); }
 });
+it.each(['create', 'append'] as const)('supports direct image %s without a legacy approval draft', async mode => {
+  const f = await fixture();
+  try {
+    const result = mode === 'create'
+      ? await f.operations.execute({ type: 'create', title: 'fixture', content: f.content() })
+      : await f.operations.execute({ type: 'update', documentId: 'imageDoc', revision: 1, change: { type: 'append', content: f.content() } });
+    expect(result).toMatchObject({ documentId: 'imageDoc' });
+    expect(f.calls.filter(c => c.path.endsWith('/medias/upload_all'))).toHaveLength(1);
+    expect(f.calls.filter(c => c.method === 'PATCH')).toHaveLength(1);
+    await expect(readFile(join(f.config.stateDir, 'test', 'operations'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally { await f.cleanup(); }
+});
+it('rejects unsafe direct images and missing media scope before any mutation', async () => {
+  const f = await fixture();
+  try {
+    f.store.value!.scopes = [...session().scopes];
+    await expect(f.operations.execute({ type: 'create', title: 'fixture', content: f.content() })).rejects.toMatchObject({ kind: 'MISSING_SCOPE' });
+    f.store.value!.scopes.push('docs:document.media:upload');
+    await writeFile(f.image, 'not an image');
+    await expect(f.operations.execute({ type: 'create', title: 'fixture', content: f.content() })).rejects.toMatchObject({ kind: 'UNSUPPORTED_IMAGE' });
+    expect(f.calls).toHaveLength(0);
+  } finally { await f.cleanup(); }
+});
 
 it('refuses missing media scope and unsafe or changed images before any write', async () => {
   const f = await fixture();

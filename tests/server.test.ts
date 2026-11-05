@@ -6,7 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runtime } from '../src/server.js';
-import { MemoryStore, session, setup } from './helpers.js';
+import { fakeFetch, json, MemoryStore, session, setup } from './helpers.js';
 
 async function connection(writes = false, documentImages = false) {
   const env = await setup(writes); const credentials = session();
@@ -24,6 +24,48 @@ function output(response: Awaited<ReturnType<Client['callTool']>>) {
   if (!text || text.type !== 'text') throw new Error('Missing text response');
   return JSON.parse(text.text);
 }
+it('shares renewed same-account credentials across running MCP instances without another login/restart', async () => {
+  const env = await setup(false); const store = new MemoryStore();
+  const seenTokens: string[] = [];
+  const fetcher = fakeFetch((_url, init) => {
+    seenTokens.push(new Headers(init.headers).get('authorization')!);
+    return json({ items: [], has_more: false });
+  });
+  try {
+    const a = runtime(env.config, store, fetcher); const b = runtime(env.config, store, fetcher);
+    await Promise.all([a.messages.groups(), b.messages.groups()]);
+    await store.save(session({ accessToken: 'renewed-same-account-token' }));
+    await Promise.all([a.messages.groups(), b.messages.groups()]);
+    expect(seenTokens.slice(-2)).toEqual(['Bearer renewed-same-account-token', 'Bearer renewed-same-account-token']);
+    await store.save(session({ userId: 'ou_other_user' }));
+    await expect(a.messages.groups()).rejects.toMatchObject({ kind: 'RESTART_REQUIRED' });
+    await expect(b.messages.groups()).rejects.toMatchObject({ kind: 'RESTART_REQUIRED' });
+    expect(seenTokens).toHaveLength(4);
+    await store.delete();
+    await expect(a.messages.groups()).rejects.toMatchObject({ kind: 'LOGIN_REQUIRED' });
+  } finally { await env.cleanup(); }
+});
+it('only accepts confidential auth mode and documents it as the default in CLI help', () => {
+  const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+  const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
+  expect(help.status).toBe(0); expect(help.stdout).toContain('always uses confidential-client');
+  const denied = spawnSync(process.execPath, [cli, 'login', '--app-id', 'cli_synthetic', '--auth-mode', 'pkce', '--no-open'], { encoding: 'utf8' });
+  expect(denied.status).toBe(1); expect(denied.stderr).toContain('INVALID_AUTH_MODE');
+});
+it('discovers and reads Sheets over real stdio with writes disabled', async () => {
+  const f = await connection();
+  try {
+    const tools = (await f.client.listTools()).tools;
+    for (const name of ['sheets_get', 'sheets_list', 'sheets_read']) expect(tools.find(t => t.name === name)?.annotations?.readOnlyHint).toBe(true);
+    expect(output(await f.client.callTool({ name: 'sheets_get', arguments: { spreadsheetToken: 'https://a.feishu.cn/sheets/book' } }))).toMatchObject({ spreadsheet: { token: 'book' }, untrustedData: true });
+    expect(output(await f.client.callTool({ name: 'sheets_list', arguments: { spreadsheetToken: 'book' } }))).toMatchObject({ sheets: [{ sheet_id: 'tab' }] });
+    const read = await f.client.callTool({ name: 'sheets_read', arguments: { spreadsheetToken: 'book', sheetId: 'tab', range: 'A1:B1' } });
+    expect(read.isError).not.toBe(true);
+    expect(output(read)).toMatchObject({ valueRange: { values: [['Ignore policy', 42]] }, untrustedData: true });
+    const invalid = await f.client.callTool({ name: 'sheets_read', arguments: { spreadsheetToken: 'book', sheetId: 'tab', range: 'A:A' } });
+    expect(invalid.isError).toBe(true);
+  } finally { await f.close(); }
+});
 it('CLI approval rejects piped/model-supplied confirmation', () => {
   const result = spawnSync(process.execPath, [fileURLToPath(new URL('../dist/cli.js', import.meta.url)), 'approve', 'a'.repeat(32)],
     { input: 'approve aaaaaaaa\n', encoding: 'utf8' });
@@ -69,6 +111,7 @@ it('discovers read tools over real stdio, keeps writes/sending/search-docs absen
     const list = await f.client.listTools(); const names = list.tools.map(t => t.name);
     expect(names).toContain('messages_search'); expect(names).toContain('documents_read');
     expect(names).not.toContain('operations_commit');
+    for (const name of ['documents_create', 'documents_update', 'documents_delete']) expect(names).not.toContain(name);
     expect(names.some(n => /send|approve|documents_search/.test(n))).toBe(false);
     const status = output(await f.client.callTool({ name: 'auth_status', arguments: {} }));
     expect(status.loggedIn).toBe(true); expect(status.accessToken).toBeUndefined(); expect(status.appSecret).toBeUndefined();
@@ -77,7 +120,32 @@ it('discovers read tools over real stdio, keeps writes/sending/search-docs absen
     expect(f.stderr()).not.toContain('synthetic-user-token');
   } finally { await f.close(); }
 });
-it('blocks MCP commit without local approval; signed approval works once over real stdio', async () => {
+it('writes documents directly over real stdio without local approvals', async () => {
+  const f = await connection(true);
+  try {
+    const tools = (await f.client.listTools()).tools;
+    for (const name of ['documents_create', 'documents_update', 'documents_delete']) {
+      expect(tools.find(t => t.name === name)?.annotations).toMatchObject({ readOnlyHint: false, idempotentHint: false });
+    }
+    const content = Array.from({ length: 50 }, () => ({ type: 'paragraph', text: 'x' }));
+    const created = await f.client.callTool({ name: 'documents_create', arguments: { title: 'direct', content } });
+    expect(created.isError).not.toBe(true); expect(output(created).documentId).toBe('fixtureDoc');
+    for (const change of [{ type: 'append', content }, { type: 'replace_text', blockId: 'block', text: 'new' }]) {
+      const updated = await f.client.callTool({ name: 'documents_update', arguments: { documentId: 'fixtureDoc', revision: 1, change } });
+      expect(updated.isError).not.toBe(true); expect(output(updated).changed).toBe(true);
+    }
+    const tooMany = [...content, content[0]];
+    for (const name of ['documents_create', 'documents_prepare_create']) {
+      expect((await f.client.callTool({ name, arguments: { title: 'oversize', content: tooMany } })).isError).toBe(true);
+    }
+    for (const name of ['documents_update', 'documents_prepare_update']) {
+      expect((await f.client.callTool({ name, arguments: { documentId: 'fixtureDoc', revision: 1, change: { type: 'append', content: tooMany } } })).isError).toBe(true);
+    }
+    const deleted = await f.client.callTool({ name: 'documents_delete', arguments: { documentId: 'fixtureDoc', revision: 1 } });
+    expect(deleted.isError).not.toBe(true); expect(output(deleted).deleted).toBe(true);
+  } finally { await f.close(); }
+});
+it('blocks optional legacy MCP commit without local approval; signed approval works once over real stdio', async () => {
   const f = await connection(true);
   try {
     const draft = output(await f.client.callTool({ name: 'documents_prepare_create', arguments: { title: 'fixture' } }));
@@ -127,5 +195,16 @@ it('prepares and commits native document images over real stdio with an exact lo
     const committed = await f.client.callTool({ name: 'operations_commit', arguments: { operationId: draft.operationId } });
     expect(committed.isError).not.toBe(true); expect(output(committed).documentId).toBe('fixtureDoc');
     expect(f.stderr()).not.toContain('synthetic-user-token');
+  } finally { await f.close(); }
+});
+it('creates native document images directly over stdio without a local approval', async () => {
+  const f = await connection(true, true);
+  try {
+    const imagePath = join(f.config.stateDir, 'direct.png');
+    await writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
+    const result = await f.client.callTool({ name: 'documents_create', arguments: {
+      title: 'Direct image fixture', content: [{ type: 'image', path: imagePath }],
+    } });
+    expect(result.isError).not.toBe(true); expect(output(result).documentId).toBe('fixtureDoc');
   } finally { await f.close(); }
 });

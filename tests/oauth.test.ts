@@ -1,21 +1,19 @@
 import { it, expect } from 'vitest';
-import { createHash } from 'node:crypto';
 import { authorize, CALLBACK, equal, login, refreshSession } from '../src/oauth.js';
 import { BASE_SCOPES } from '../src/core.js';
 import { MemoryStore, fakeFetch, session, setup } from './helpers.js';
 
-it('uses PKCE by default choice; explicit confidential mode omits both PKCE parameters', () => {
-  const pkce = authorize('cli_synthetic', 'pkce'); const url = new URL(pkce.url);
-  expect(url.searchParams.get('code_challenge')).toBe(createHash('sha256').update(pkce.verifier).digest('base64url'));
-  const confidential = new URL(authorize('cli_synthetic', 'confidential').url);
+it('uses confidential-client auth by default and never adds PKCE parameters', () => {
+  const confidential = new URL(authorize('cli_synthetic').url);
   expect(confidential.searchParams.has('code_challenge')).toBe(false);
   expect(confidential.searchParams.has('code_challenge_method')).toBe(false);
   expect(confidential.searchParams.get('scope')).not.toContain('offline_access');
-  expect(authorize('cli_synthetic', 'pkce', true).scopes).toContain('offline_access');
+  expect(authorize('cli_synthetic', 'confidential', true).scopes).toContain('offline_access');
+  expect(() => authorize('cli_synthetic', 'pkce' as never)).toThrow();
   expect(equal(null, 'x')).toBe(false); expect(equal('x', 'y')).toBe(false);
 });
 it('requests document-media upload only through explicit opt-in', () => {
-  expect(authorize('cli_synthetic', 'pkce').scopes).not.toContain('docs:document.media:upload');
+  expect(authorize('cli_synthetic').scopes).not.toContain('docs:document.media:upload');
   const flow = authorize('cli_synthetic', 'confidential', true, true);
   expect(flow.scopes).toEqual([...BASE_SCOPES, 'offline_access', 'docs:document.media:upload']);
   expect(new URL(flow.url).searchParams.get('scope')).toContain('docs:document.media:upload');
@@ -23,7 +21,7 @@ it('requests document-media upload only through explicit opt-in', () => {
 it('runs a protected local login callback and saves only an identity-bound credential record', async () => {
   const { config, cleanup } = await setup(); const store = new MemoryStore(null);
   let ready!: (url: string) => void; const opening = new Promise<string>(resolve => { ready = resolve; });
-  const finished = login({ config, store, appId: 'cli_synthetic', mode: 'confidential', offline: false, replace: false, onReady: ready,
+  const finished = login({ config, store, appId: 'cli_synthetic', offline: false, replace: false, onReady: ready,
     fetcher: fakeFetch((url, init) => {
       if (url.pathname.endsWith('/token')) {
         const payload = JSON.parse(String(init.body));

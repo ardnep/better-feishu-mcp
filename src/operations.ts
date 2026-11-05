@@ -41,6 +41,20 @@ export class Operations {
   private root() { return join(this.config.stateDir, this.config.profile, 'operations'); }
   private path(id: string) { return join(this.root(), operationId.parse(id) + '.json'); }
   private assertEnabled() { if (!this.config.writes) throw new AppError('WRITES_DISABLED', 'Restart the server with BETTER_FEISHU_MCP_ENABLE_WRITES=1 to enable document mutations.'); }
+  // Direct tools use the existing user login and write opt-in, not local draft approval.
+  async execute(input: Mutation, signal?: AbortSignal) {
+    this.assertEnabled();
+    const payload = mutationSchema.parse(input);
+    signal?.throwIfAborted();
+    checkScopes(await this.sessions.token(), payload);
+    const { assets } = await loadImages(content(payload), undefined, signal);
+    const target = payload.type === 'create' ? `folder-${payload.folderId ?? 'root'}` : `doc-${payload.documentId}`;
+    return withLock(this.config, target, async () => {
+      if (payload.type === 'create') return this.documents.create(payload.title, payload.folderId, payload.content, signal, assets);
+      if (payload.type === 'update') return this.documents.update(payload.documentId, payload.revision, payload.change, signal, assets);
+      return this.documents.delete(payload.documentId, payload.revision, signal);
+    });
+  }
   private async load(id: string): Promise<Draft> {
     let text: string;
     try {
