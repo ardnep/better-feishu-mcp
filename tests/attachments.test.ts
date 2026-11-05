@@ -59,7 +59,7 @@ it('extracts bounded UTF-8 text without executing HTML, formulas or code', async
   await expect(extractAttachment(Buffer.from('x'.repeat(100_001)), 'notes.txt')).resolves.toMatchObject({ text: 'x'.repeat(100_000), truncated: true });
   await expect(extractAttachment(Buffer.from([0xff]), 'notes.txt')).rejects.toMatchObject({ kind: 'UNSUPPORTED_ENCODING' });
   await expect(extractAttachment(Buffer.from([0]), 'notes.txt')).rejects.toMatchObject({ kind: 'UNSUPPORTED_ENCODING' });
-  await expect(extractAttachment(Buffer.from('binary'), 'archive.zip')).rejects.toMatchObject({ kind: 'UNSUPPORTED_ATTACHMENT' });
+  await expect(extractAttachment(Buffer.from('binary'), 'archive.zip')).rejects.toMatchObject({ kind: 'ATTACHMENT_PARSE_FAILED' });
 });
 it('extracts real DOCX text in an isolated worker, rejects malformed and oversized archives', async () => {
   const docx = zipSync({

@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { createHash, randomBytes } from 'node:crypto';
-import { AppError, docSchema, idSchema } from './core.js';
+import { AppError, documentReadSchema, idSchema } from './core.js';
 import { FeishuHttp } from './http.js';
 import { enrichMessage, extractAttachment, imageMime } from './attachments.js';
 import { hasImages, imageBlockSchema, type LoadedImages } from './document-images.js';
+import { resolveWiki } from './wiki.js';
 
 const page = z.object({ items: z.array(z.record(z.string(), z.unknown())).default([]), has_more: z.boolean().default(false), page_token: z.string().optional() });
 const metadata = z.object({ document: z.object({ document_id: idSchema, title: z.string(), revision_id: z.number().int() }) });
@@ -73,7 +74,8 @@ export class Messages {
     });
     return { items: data.items.map(enrichMessage), untrustedData: true };
   }
-  async readAttachment(id: string, visibility: 'group' | 'p2p', resourceKey: string, type: 'image' | 'file', signal?: AbortSignal) {
+  async readAttachment(id: string, visibility: 'group' | 'p2p', resourceKey: string, type: 'image' | 'file', signal?: AbortSignal, archiveEntry?: string) {
+    if (archiveEntry !== undefined && type !== 'file') throw new AppError('INVALID_ARCHIVE', 'ZIP entry reads require type: file.');
     const message = await this.get(id, visibility, signal);
     const attachment = message.items.flatMap(item => item.attachments).find(a => a.resourceKey === resourceKey && a.type === type);
     if (!attachment) throw new AppError('ATTACHMENT_NOT_FOUND', 'Resource key and type must belong to the specified message. Read messages_get for attachment metadata first.');
@@ -82,19 +84,21 @@ export class Messages {
     });
     const mimeType = imageMime(bytes);
     if (mimeType) {
+      if (archiveEntry !== undefined) throw new AppError('INVALID_ARCHIVE', 'archiveEntry can only be used with ZIP attachments.');
       // Base64 plus MCP metadata must fit within the existing 512 KB result budget.
       if (bytes.length > 350_000) throw new AppError('ATTACHMENT_TOO_LARGE', 'Image exceeds the 350000-byte inline image limit.');
       return { attachment, sizeBytes: bytes.length, untrustedData: true, image: { mimeType, data: bytes.toString('base64') } };
     }
     if (type === 'image') throw new AppError('UNSUPPORTED_ATTACHMENT', 'Image is not a supported PNG, JPEG, GIF or WebP resource.');
-    return { attachment, sizeBytes: bytes.length, untrustedData: true, ...await extractAttachment(bytes, attachment.fileName, signal) };
+    return { attachment, sizeBytes: bytes.length, untrustedData: true, ...await extractAttachment(bytes, attachment.fileName, signal, archiveEntry) };
   }
 }
 export class Documents {
   private readonly cursors = new Cursors();
   constructor(private readonly api: FeishuHttp) {}
   async metadata(id: string, signal?: AbortSignal) {
-    return (await this.api.request('GET', `/docx/v1/documents/${encodeURIComponent(docSchema.parse(id))}`, metadata,
+    const token = await resolveWiki(this.api, documentReadSchema.parse(id), 'docx', signal);
+    return (await this.api.request('GET', `/docx/v1/documents/${encodeURIComponent(token)}`, metadata,
       { scopes: [['docx:document:readonly', 'docx:document']], signal })).document;
   }
   async text(id: string, signal?: AbortSignal) {

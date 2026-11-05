@@ -1,15 +1,13 @@
 import { z } from 'zod';
-import { idSchema } from './core.js';
+import { feishuLinkToken, idSchema } from './core.js';
 import { FeishuHttp } from './http.js';
+import { resolveWiki } from './wiki.js';
 
 export const spreadsheetSchema = z.string().max(400).transform((value, ctx) => {
   if (idSchema.safeParse(value).success) return value;
-  try {
-    const url = new URL(value);
-    const match = /^\/sheets\/([A-Za-z0-9_-]+)\/?$/.exec(url.pathname);
-    if (url.protocol === 'https:' && url.hostname.endsWith('.feishu.cn') && !url.username && !url.password && !url.port && match?.[1] && idSchema.safeParse(match[1]).success) return match[1];
-  } catch { /* only direct Sheets links or tokens */ }
-  ctx.addIssue({ code: 'custom', message: 'Provide a spreadsheet token or https://<tenant>.feishu.cn/sheets/<token> link. Wiki and Base links are not supported.' });
+  const token = feishuLinkToken(value, 'sheets'); if (token) return token;
+  if (feishuLinkToken(value, 'wiki')) return value;
+  ctx.addIssue({ code: 'custom', message: 'Provide a spreadsheet token, direct Feishu /sheets/<token> link or /wiki/<node> link. Base links are not supported.' });
   return z.NEVER;
 });
 // Explicit endpoints prevent accidental whole-sheet reads. Sheet IDs are separate
@@ -38,18 +36,18 @@ const values = z.object({
 export class Sheets {
   constructor(private readonly api: FeishuHttp) {}
   async metadata(id: string, signal?: AbortSignal) {
-    const token = spreadsheetSchema.parse(id);
+    const token = await resolveWiki(this.api, spreadsheetSchema.parse(id), 'sheet', signal);
     const data = await this.api.request('GET', `/sheets/v3/spreadsheets/${encodeURIComponent(token)}?user_id_type=open_id`, metadata, { scopes, signal });
     return { spreadsheet: data.spreadsheet, untrustedData: true };
   }
   async tabs(id: string, signal?: AbortSignal) {
-    const token = spreadsheetSchema.parse(id);
+    const token = await resolveWiki(this.api, spreadsheetSchema.parse(id), 'sheet', signal);
     const data = await this.api.request('GET', `/sheets/v3/spreadsheets/${encodeURIComponent(token)}/sheets/query`, tabs, { scopes, signal });
     return { spreadsheetToken: token, sheets: data.sheets, untrustedData: true };
   }
   async read(id: string, sheetId: string, range: string, render: z.infer<typeof renderSchema> = 'FormattedValue', signal?: AbortSignal) {
-    const token = spreadsheetSchema.parse(id);
     const requestedRange = `${idSchema.parse(sheetId)}!${cellRangeSchema.parse(range)}`;
+    const token = await resolveWiki(this.api, spreadsheetSchema.parse(id), 'sheet', signal);
     const query = new URLSearchParams({ valueRenderOption: renderSchema.parse(render), dateTimeRenderOption: 'FormattedString', user_id_type: 'open_id' });
     const data = await this.api.request('GET', `/sheets/v2/spreadsheets/${encodeURIComponent(token)}/values/${encodeURIComponent(requestedRange)}?${query}`, values, { scopes, signal });
     return { ...data, valueRange: { ...data.valueRange, values: data.valueRange.values ?? [] }, requestedRange, valueRenderOption: render, untrustedData: true,

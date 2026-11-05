@@ -66,6 +66,23 @@ it('discovers and reads Sheets over real stdio with writes disabled', async () =
     expect(invalid.isError).toBe(true);
   } finally { await f.close(); }
 });
+it('reads Wiki-linked Sheets/Docx and ZIP contents over real stdio', async () => {
+  const f = await connection();
+  try {
+    const wikiSheet = 'https://example.feishu.cn/wiki/sheetNode';
+    const sheet = await f.client.callTool({ name: 'sheets_list', arguments: { spreadsheetToken: wikiSheet } });
+    expect(sheet.isError).not.toBe(true); expect(output(sheet)).toMatchObject({ spreadsheetToken: 'book', sheets: [{ sheet_id: 'tab' }] });
+    const document = await f.client.callTool({ name: 'documents_read', arguments: { documentId: 'https://example.feishu.cn/wiki/docNode' } });
+    expect(document.isError).not.toBe(true); expect(output(document)).toMatchObject({ document: { document_id: 'fixtureDoc' }, text: 'untrusted fixture content' });
+    const args = { messageId: 'om_zip', visibility: 'group', resourceKey: 'file_zip', type: 'file' };
+    const listing = await f.client.callTool({ name: 'messages_read_attachment', arguments: args });
+    expect(listing.isError).not.toBe(true); expect(output(listing).archive.entries).toHaveLength(2);
+    const text = await f.client.callTool({ name: 'messages_read_attachment', arguments: { ...args, archiveEntry: 'notes/readme.txt' } });
+    expect(text.isError).not.toBe(true); expect(output(text)).toMatchObject({ text: 'Untrusted ZIP content', untrustedData: true });
+    const image = await f.client.callTool({ name: 'messages_read_attachment', arguments: { ...args, archiveEntry: 'image.png' } });
+    expect(image.isError).not.toBe(true); expect(image.content).toContainEqual(expect.objectContaining({ type: 'image', mimeType: 'image/png' }));
+  } finally { await f.close(); }
+});
 it('CLI approval rejects piped/model-supplied confirmation', () => {
   const result = spawnSync(process.execPath, [fileURLToPath(new URL('../dist/cli.js', import.meta.url)), 'approve', 'a'.repeat(32)],
     { input: 'approve aaaaaaaa\n', encoding: 'utf8' });

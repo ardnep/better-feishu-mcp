@@ -91,10 +91,10 @@ Client configuration formats differ; the important fields are command, args and 
 | `threads_history` | Replies for an explicit thread ID |
 | `messages_get` | Retrieve an individual message |
 | `messages_read_attachment` | Read a message attachment as text or a native image |
-| `documents_get` | Modern Docx metadata and revision |
+| `documents_get` | Modern Docx metadata and revision, including Wiki links |
 | `documents_read` | Plain text capped at 100000 characters |
 | `documents_blocks` | Structured blocks with opaque, revision-bound cursors |
-| `sheets_get` | Spreadsheet metadata from a token or direct Sheets link |
+| `sheets_get` | Spreadsheet metadata from a token, direct Sheets link or Wiki link |
 | `sheets_list` | Tab IDs, titles, visibility and grid sizes |
 | `sheets_read` | Explicit cell-range reads, up to 10000 cells |
 
@@ -119,7 +119,13 @@ Enable the user scope `sheets:spreadsheet:readonly` in your Feishu app, then log
 
 Use explicit ascending A1 cell ranges (or a single cell), not tab titles, whole rows/columns or an entire sheet. Reads are capped at 10000 cells, 2 MB provider responses and 512 KB MCP results; request a smaller range if a byte limit is exceeded. Trailing empty cells may be omitted, and typed/rich cell values are preserved as returned by Feishu. `valueRenderOption` defaults to `FormattedValue`; `UnformattedValue`, `Formula` and `ToString` are also available. Dates request formatted strings. Feishu's API does not support calculated cross-sheet reference or array formula results.
 
-All tools use only your user token and existing resource access, mark spreadsheet content as untrusted, and are available with writes disabled. No sheet writes, Wiki resolution, Base/Bitable access, Excel attachment parsing or sheet search is included. Metadata/tab/range APIs and real MCP stdio are tested with synthetic data; **live Sheets reads remain unverified** pending authorization and a target spreadsheet.
+All tools use only your user token and existing resource access, mark spreadsheet content as untrusted, and are available with writes disabled. No sheet writes, Base/Bitable access, Excel attachment parsing or sheet search is included. Metadata/tab/range APIs and real MCP stdio are tested with synthetic data; **live Sheets reads remain unverified** pending authorization and a target spreadsheet.
+
+### Wiki links
+
+The document read tools (`documents_get/read/blocks`) and all Sheets tools accept `https://<tenant>.feishu.cn/wiki/<node>` links. Wiki is a wrapper, not a legacy document format: the server resolves the node through the Wiki API, checks its underlying type, then reads the actual Docx or Sheet with the same user token. Passing a Wiki Sheet to a Docx reader (or vice versa) gives an explicit type mismatch instead of pretending the link is a legacy format.
+
+Enable the minimal user scope **`wiki:node:read`**, then reauthorize your existing login. Broader existing `wiki:wiki:readonly`/`wiki:wiki` grants are also accepted. Resource ACLs still apply, and app/tenant approval requirements for the new scope have not been live-verified. No bot membership, Wiki search or Wiki writes are added. Direct links/IDs do not require the Wiki scope. For document writes, use the resolved `document_id` returned by the read tools, so a prepared write is bound to the actual document rather than a Wiki wrapper. Legacy `/doc/`, Base and unsupported underlying types still fail explicitly. Wiki resolution is tested with synthetic APIs and real stdio, not a live authorized Wiki node yet.
 
 ### Message attachments
 
@@ -138,11 +144,14 @@ Message get/history/thread/search results now include an `attachments` array, wh
 - PDF and DOCX files return extracted plain text, not their original layout. PDF extraction reads at most 50 pages; scanned PDFs require OCR, which is not provided.
 - PNG, JPEG, GIF and WebP return native MCP image content for image-capable clients/models. Use `type: "image"` for image resources.
 - Downloads are capped at 5 MB, text at 100000 characters and inline images at 350 KB. Truncated text/page results are marked. Oversized resources fail explicitly rather than being saved to disk.
-- Unsupported formats (including spreadsheets, presentations, archives, audio/video and stickers) fail explicitly. No automatic downloads, local paths, OCR, transcription or attachment uploads.
+- ZIP attachments return an entry listing. Pass an exact `archiveEntry` name to read one supported UTF-8 text/code, PDF, DOCX or image entry. Nothing is saved to disk or executed. Limits: **200 entries**, **5 MB per expanded entry**, **20 MB total declared expanded size**; actual inflation of the selected entry is also bounded. The original 5 MB download limit still applies. Encrypted, ZIP64, multi-disk, symlink, unsafe/duplicate-path and nested archives are rejected; only stored/deflated entries with UTF-8/ASCII names are supported. Unsupported binary entries can be listed but not read.
+- Other unsupported formats (including spreadsheets, presentations, non-ZIP archives, audio/video and stickers) fail explicitly. No automatic local downloads, OCR, transcription or attachment uploads.
 
 Each read re-fetches the source message to verify the resource key/type. It uses the existing message-read scopes and **only your user token**; resource ACLs and tenant policy can still deny access. All attachment contents are untrusted data. PDF/DOCX parsing runs in a time/heap-limited worker, not an OS sandbox.
 
 Attachment functionality is covered by synthetic API tests, actual PDF/DOCX parsing fixtures and real MCP stdio tests; **live Feishu attachment access is not yet validated**. After rebuilding, reconnect/restart your MCP client/server to discover the new tool.
+
+For a ZIP, first use the normal attachment request with `type: "file"`; then add, for example, `"archiveEntry": "notes/readme.md"` to read that entry. Each call revalidates the attachment against its source message before downloading. ZIP processing uses the same time/heap-limited worker as document extraction; archive filenames and contents remain untrusted data, never instructions.
 
 ### Document writes
 
@@ -232,9 +241,9 @@ The server is **not an OS sandbox**. An agent with unrestricted shell/keychain a
 
 ## Permissions
 
-User scopes: `search:message`, `im:chat:read`, `im:message:readonly`, `im:message.group_msg:get_as_user`, `im:message.p2p_msg:get_as_user`, `docx:document:readonly`, `docx:document:create`, `docx:document:write_only`, `space:document:delete`, `sheets:spreadsheet:readonly`.
+User scopes: `search:message`, `im:chat:read`, `im:message:readonly`, `im:message.group_msg:get_as_user`, `im:message.p2p_msg:get_as_user`, `docx:document:readonly`, `docx:document:create`, `docx:document:write_only`, `space:document:delete`, `sheets:spreadsheet:readonly`, `wiki:node:read`.
 
-No `search:docs:read`, `im:message.send_as_user` or tenant-token access is requested. On the tested app, the original nine scopes were Added without another release; the new Sheets scope's approval requirements remain unverified. Scope eligibility can differ elsewhere.
+No `search:docs:read`, `im:message.send_as_user` or tenant-token access is requested. On the tested app, the original nine scopes were Added without another release; the new Sheets/Wiki scopes' approval requirements remain unverified. Scope eligibility can differ elsewhere.
 
 ## Validation and release status
 

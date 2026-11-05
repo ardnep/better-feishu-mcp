@@ -16,14 +16,24 @@ export function safeError(error: unknown) {
 }
 export const profileSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,48}$/);
 export const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/);
-export const docSchema = z.string().max(400).transform((value, ctx) => {
-  if (idSchema.safeParse(value).success) return value;
+export function feishuLinkToken(value: string, kind: 'docx' | 'sheets' | 'wiki'): string | undefined {
   try {
     const url = new URL(value);
-    const match = /^\/docx\/([A-Za-z0-9_-]+)\/?$/.exec(url.pathname);
+    const match = new RegExp(`^/${kind}/([A-Za-z0-9_-]+)/?$`).exec(url.pathname);
     if (url.protocol === 'https:' && url.hostname.endsWith('.feishu.cn') && !url.username && !url.password && !url.port && match?.[1] && idSchema.safeParse(match[1]).success) return match[1];
-  } catch { /* only explicit Docx links or IDs */ }
-  ctx.addIssue({ code: 'custom', message: 'Provide a modern Docx ID or https://<tenant>.feishu.cn/docx/<id> link. Wiki/legacy links are not supported.' });
+  } catch { /* only explicit Feishu links */ }
+  return undefined;
+}
+export const docSchema = z.string().max(400).transform((value, ctx) => {
+  if (idSchema.safeParse(value).success) return value;
+  const token = feishuLinkToken(value, 'docx'); if (token) return token;
+  ctx.addIssue({ code: 'custom', message: 'Provide a modern Docx ID or direct Feishu /docx/<id> link. Read Wiki links with documents_get/read/blocks first and use the resolved document_id for writes.' });
+  return z.NEVER;
+});
+export const documentReadSchema = z.string().max(400).transform((value, ctx) => {
+  if (feishuLinkToken(value, 'wiki')) return value;
+  const parsed = docSchema.safeParse(value); if (parsed.success) return parsed.data;
+  ctx.addIssue({ code: 'custom', message: 'Provide a Docx ID, direct Feishu /docx/<id> link or /wiki/<node> link. Legacy /doc/ documents are not supported.' });
   return z.NEVER;
 });
 export const BASE_SCOPES = [
@@ -31,6 +41,7 @@ export const BASE_SCOPES = [
   'im:message.group_msg:get_as_user', 'im:message.p2p_msg:get_as_user',
   'docx:document:readonly', 'docx:document:create', 'docx:document:write_only', 'space:document:delete',
   'sheets:spreadsheet:readonly',
+  'wiki:node:read',
 ] as const;
 export type AuthMode = 'confidential';
 export type Settings = Readonly<{ profile: string; stateDir: string; writes: boolean }>;

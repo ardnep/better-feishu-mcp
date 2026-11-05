@@ -8,7 +8,7 @@ describe('read-only Sheets', () => {
     expect(spreadsheetSchema.parse('book_123')).toBe('book_123');
     expect(spreadsheetSchema.parse('https://example.feishu.cn/sheets/book_123?sheet=tab')).toBe('book_123');
     for (const value of ['https://feishu.cn.evil.com/sheets/id', 'https://evil.com/sheets/id', 'http://a.feishu.cn/sheets/id',
-      'https://a.feishu.cn:123/sheets/id', 'https://user@a.feishu.cn/sheets/id', 'https://a.feishu.cn/wiki/id', 'https://a.feishu.cn/base/id', '../secret']) {
+      'https://a.feishu.cn:123/sheets/id', 'https://user@a.feishu.cn/sheets/id', 'https://a.feishu.cn/base/id', '../secret']) {
       expect(spreadsheetSchema.safeParse(value).success, value).toBe(false);
     }
   });
