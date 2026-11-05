@@ -5,9 +5,17 @@
   "description": "Local, user-identity Feishu MCP: message reads and safe Docs CRUD.",
   "type": "module",
   "license": "UNLICENSED",
-  "engines": { "node": ">=24 <25" },
-  "bin": { "better-feishu-mcp": "dist/cli.js" },
-  "files": ["dist", "README.md", "SECURITY.md"],
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "bin": {
+    "better-feishu-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "SECURITY.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
@@ -18,6 +26,9 @@
   "dependencies": {
     "@modelcontextprotocol/server": "2.4.0",
     "@napi-rs/keyring": "2.1.2",
+    "fflate": "0.8.3",
+    "mammoth": "1.13.0",
+    "pdf-parse": "2.4.5",
     "zod": "4.6.7"
   },
   "devDependencies": {
