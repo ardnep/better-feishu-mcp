@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "better-feishu-mcp": {
+      "command": "node",
+      "args": ["/absolute/path/to/better-feishu-mcp/dist/cli.js", "serve", "--stdio"],
+      "env": {
+        "BETTER_FEISHU_MCP_PROFILE": "default",
+        "BETTER_FEISHU_MCP_ENABLE_WRITES": "0"
+      }
+    }
+  }
+}
