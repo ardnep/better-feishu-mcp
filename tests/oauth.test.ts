@@ -12,6 +12,12 @@ it('uses confidential-client auth by default and never adds PKCE parameters', ()
   expect(() => authorize('cli_synthetic', 'pkce' as never)).toThrow();
   expect(equal(null, 'x')).toBe(false); expect(equal('x', 'y')).toBe(false);
 });
+it('requests document-media upload only through explicit opt-in', () => {
+  expect(authorize('cli_synthetic').scopes).not.toContain('docs:document.media:upload');
+  const flow = authorize('cli_synthetic', 'confidential', true, true);
+  expect(flow.scopes).toEqual([...BASE_SCOPES, 'offline_access', 'docs:document.media:upload']);
+  expect(new URL(flow.url).searchParams.get('scope')).toContain('docs:document.media:upload');
+});
 it('runs a protected local login callback and saves only an identity-bound credential record', async () => {
   const { config, cleanup } = await setup(); const store = new MemoryStore(null);
   let ready!: (url: string) => void; const opening = new Promise<string>(resolve => { ready = resolve; });
@@ -36,10 +42,20 @@ it('runs a protected local login callback and saves only an identity-bound crede
     const response = await fetch(start + '/start', { method: 'POST', redirect: 'manual', headers: { Origin: origin },
       body: new URLSearchParams({ csrf, secret: 'synthetic-local-input' }) });
     expect(response.status).toBe(303);
+    const duplicate = await fetch(start + '/start', { method: 'POST', redirect: 'manual', headers: { Origin: origin },
+      body: new URLSearchParams({ csrf, secret: 'must-not-replace-the-first-secret' }) });
+    const invalidRepeat = await fetch(start + '/start', { method: 'POST', redirect: 'manual', headers: { Origin: origin },
+      body: new URLSearchParams({ csrf: 'wrong', secret: 'wrong' }) });
+    expect(invalidRepeat.status).toBe(403);
+    const resume = await fetch(start); const resumeHtml = await resume.text();
+    expect(resume.status).toBe(200); expect(resumeHtml).toContain('Continue to Feishu consent');
+    expect(resumeHtml).not.toContain('type="password"'); expect(resumeHtml).not.toContain('synthetic-local-input');
     const authorization = new URL(response.headers.get('location')!);
     const callback = new URL(CALLBACK); callback.search = new URLSearchParams({ code: 'synthetic-code', state: authorization.searchParams.get('state')! }).toString();
     const completed = await fetch(callback);
     expect(completed.status).toBe(200); await completed.text(); await finished;
+    expect(duplicate.status).toBe(303);
+    expect(duplicate.headers.get('location')).toBe(response.headers.get('location'));
     expect(store.value).toMatchObject({ appId: 'cli_synthetic', userId: 'ou_synthetic', tenantId: 'tenant_synthetic', authMode: 'confidential' });
     expect(store.value?.refreshToken).toBeUndefined();
   } finally { await cleanup(); }

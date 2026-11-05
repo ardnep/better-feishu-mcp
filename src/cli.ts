@@ -12,7 +12,7 @@ import { createServer, runtime, status, VERSION } from './server.js';
 
 const { positionals, values } = parseArgs({ allowPositionals: true, strict: true, options: {
   profile: { type: 'string' }, 'app-id': { type: 'string' }, 'auth-mode': { type: 'string' },
-  offline: { type: 'boolean' }, replace: { type: 'boolean' }, 'no-open': { type: 'boolean' },
+  offline: { type: 'boolean' }, 'document-images': { type: 'boolean' }, replace: { type: 'boolean' }, 'no-open': { type: 'boolean' },
   stdio: { type: 'boolean' }, 'probe-keychain': { type: 'boolean' }, version: { type: 'boolean' }, help: { type: 'boolean' },
 } });
 async function main() {
@@ -22,7 +22,7 @@ async function main() {
     console.log(`better-feishu-mcp ${VERSION}
 
 Commands:
-  login --app-id cli_... [--offline] [--replace] [--no-open]
+  login --app-id cli_... [--offline] [--document-images] [--replace] [--no-open]
   status
   doctor [--probe-keychain]
   logout
@@ -69,7 +69,7 @@ Configure callback: ${CALLBACK}`); return;
     // Retain the old confidential flag as a compatible alias; PKCE is no longer supported.
     if (values['auth-mode'] !== undefined && values['auth-mode'] !== 'confidential') throw new AppError('INVALID_AUTH_MODE', 'Only confidential-client authentication is supported. Omit --auth-mode.');
     const mode = 'confidential' as const;
-    await login({ config, store, appId, mode, offline: !!values.offline, replace: !!values.replace,
+    await login({ config, store, appId, mode, offline: !!values.offline, documentImages: !!values['document-images'], replace: !!values.replace,
       onReady(url) {
         console.log(`Open this local credential form: ${url}`);
         console.log(`Registered callback must be exactly ${CALLBACK}`);
@@ -91,7 +91,7 @@ Configure callback: ${CALLBACK}`); return;
     if (!process.stdin.isTTY || !process.stdout.isTTY) throw new AppError('TRUSTED_TERMINAL_REQUIRED', 'Approval requires an interactive trusted human terminal, not piped confirmation.');
     const preview = await app.operations.inspect(id);
     console.log(JSON.stringify(preview, null, 2));
-    console.log('Review the exact target/content above. Delete means recycle bin, not permanent erasure.');
+    console.log('Review the exact target/content above. For images, inspect the local files and their SHA-256/size/dimensions. Changed bytes require a new draft. Delete means recycle bin, not permanent erasure.');
     const prompt = createInterface({ input: process.stdin, output: process.stdout });
     try {
       const expected = 'approve ' + id.slice(0, 8);

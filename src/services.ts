@@ -3,17 +3,21 @@ import { createHash, randomBytes } from 'node:crypto';
 import { AppError, docSchema, idSchema } from './core.js';
 import { FeishuHttp } from './http.js';
 import { enrichMessage, extractAttachment, imageMime } from './attachments.js';
+import { hasImages, imageBlockSchema, type LoadedImages } from './document-images.js';
 
 const page = z.object({ items: z.array(z.record(z.string(), z.unknown())).default([]), has_more: z.boolean().default(false), page_token: z.string().optional() });
 const metadata = z.object({ document: z.object({ document_id: idSchema, title: z.string(), revision_id: z.number().int() }) });
 const raw = z.object({ content: z.string() });
-export const contentSchema = z.array(z.object({
+export const contentSchema = z.array(z.union([z.object({
   type: z.enum(['paragraph', 'heading', 'bullet', 'ordered', 'quote', 'code']),
   text: z.string().min(1).max(10_000), level: z.number().int().min(1).max(6).optional(),
-}).strict()).min(1).max(50).refine(blocks => blocks.reduce((n, b) => n + b.text.length, 0) <= 32_000, 'Total content limit is 32000 characters.');
+}).strict(), imageBlockSchema])).min(1).max(50)
+  .refine(blocks => blocks.reduce((n, b) => n + (b.type === 'image' ? b.caption?.length ?? 0 : b.text.length), 0) <= 32_000, 'Total content limit is 32000 characters.')
+  .refine(blocks => blocks.filter(b => b.type === 'image').length <= 10, 'At most ten images are allowed.');
 export type Content = z.infer<typeof contentSchema>;
 export function toBlocks(content: Content) {
   return content.map(block => {
+    if (block.type === 'image') return { block_type: 27, image: {} };
     const type = block.type === 'heading' ? 2 + (block.level ?? 1) : ({ paragraph: 2, bullet: 12, ordered: 13, code: 14, quote: 15 } as const)[block.type];
     const field = block.type === 'paragraph' ? 'text' : block.type === 'heading' ? `heading${block.level ?? 1}` : block.type;
     return { block_type: type, [field]: { elements: [{ text_run: { content: block.text } }] } };
@@ -108,24 +112,71 @@ export class Documents {
       { scopes: [['docx:document:readonly', 'docx:document']], signal });
     return { document, blocks: data.items, hasMore: data.has_more, nextCursor: data.has_more ? this.cursors.put(binding, data.page_token) : undefined, untrustedData: true };
   }
-  async create(title: string, folderId: string | undefined, content: Content | undefined, signal?: AbortSignal) {
+  async create(title: string, folderId: string | undefined, content: Content | undefined, signal?: AbortSignal, images?: LoadedImages) {
+    this.checkImages(content, images);
     const document = (await this.api.request('POST', '/docx/v1/documents', metadata, {
       body: { title, ...(folderId ? { folder_token: folderId } : {}) }, scopes: [['docx:document:create', 'docx:document']], signal,
     })).document;
     if (content) {
-      try { await this.append(document.document_id, content, document.revision_id, signal); }
-      catch { throw new AppError('PARTIAL_WRITE', 'Document was created, but content insertion failed. Do not retry create blindly.', { documentId: document.document_id }); }
+      try { await this.append(document.document_id, content, document.revision_id, signal, images); }
+      catch (error) {
+        if (error instanceof AppError && error.kind === 'PARTIAL_WRITE') throw error;
+        throw new AppError('PARTIAL_WRITE', 'Document was created, but content insertion failed. Do not retry create blindly.', { documentId: document.document_id });
+      }
     }
     return { documentId: document.document_id, title: document.title, note: 'Resolve the link using your tenant domain; no tenant URL is guessed.' };
   }
-  private async append(id: string, content: Content, revision: number, signal?: AbortSignal) {
-    return this.api.request('POST', `/docx/v1/documents/${id}/blocks/${id}/children?document_revision_id=${revision}`,
-      z.record(z.string(), z.unknown()), { body: { children: toBlocks(content), index: -1 }, scopes: [['docx:document:write_only', 'docx:document']], signal });
+  private checkImages(content: Content | undefined, images?: LoadedImages) {
+    for (const block of content ?? []) if (block.type === 'image' && !images?.has(block.path)) {
+      throw new AppError('INVALID_IMAGE', 'Image bytes must be verified by the write operation before document mutation.');
+    }
   }
-  async update(id: string, revision: number, change: { type: 'append'; content: Content } | { type: 'replace_text'; blockId: string; text: string }, signal?: AbortSignal) {
+  private async append(id: string, content: Content, revision: number, signal?: AbortSignal, images?: LoadedImages) {
+    this.checkImages(content, images);
+    const data = await this.api.request('POST', `/docx/v1/documents/${id}/blocks/${id}/children?document_revision_id=${revision}`,
+      z.record(z.string(), z.unknown()), { body: { children: toBlocks(content), index: -1 }, scopes: [['docx:document:write_only', 'docx:document']], signal });
+    if (!hasImages(content)) return;
+    let stage = 'blocks'; let imageBlockId: string | undefined;
+    const uploadedMedia: { blockId: string; fileToken: string }[] = [];
+    let insertedBlockIds: string[] = [];
+    try {
+      const created = z.object({ document_revision_id: z.number().int().positive(), children: z.array(z.object({ block_id: idSchema, block_type: z.number().int() })) }).parse(data);
+      insertedBlockIds = created.children.map(b => b.block_id);
+      if (created.children.length !== content.length || new Set(insertedBlockIds).size !== content.length) throw new AppError('INVALID_RESPONSE', 'Provider did not return an exact created-block mapping.');
+      let currentRevision = created.document_revision_id;
+      for (let i = 0; i < content.length; i++) {
+        const block = content[i]!;
+        if (block.type !== 'image') continue;
+        const child = created.children[i]!; imageBlockId = child.block_id;
+        if (child.block_type !== 27) throw new AppError('INVALID_RESPONSE', 'Created image block type does not match the approved content order.');
+        const image = images!.get(block.path)!;
+        const form = new FormData();
+        form.set('file_name', image.metadata.fileName); form.set('parent_type', 'docx_image');
+        form.set('parent_node', imageBlockId); form.set('size', String(image.bytes.length));
+        form.set('extra', JSON.stringify({ drive_route_token: id }));
+        form.set('file', new Blob([new Uint8Array(image.bytes)], { type: image.metadata.mimeType }), image.metadata.fileName);
+        stage = 'upload';
+        const media = await this.api.uploadMedia(form, signal);
+        uploadedMedia.push({ blockId: imageBlockId, fileToken: media.file_token });
+        stage = 'attach';
+        const attached = await this.api.request('PATCH', `/docx/v1/documents/${id}/blocks/${imageBlockId}?document_revision_id=${currentRevision}`,
+          z.object({ document_revision_id: z.number().int().positive() }), {
+            body: { replace_image: { token: media.file_token, width: image.metadata.width, height: image.metadata.height,
+              ...(block.caption ? { caption: { content: block.caption } } : {}) } }, scopes: [['docx:document:write_only', 'docx:document']], signal,
+          });
+        currentRevision = attached.document_revision_id;
+      }
+    } catch (error) {
+      throw new AppError('PARTIAL_WRITE', 'Blocks or media may already exist. Inspect this document before recovery; do not replay the operation.', {
+        documentId: id, stage, ...(imageBlockId ? { imageBlockId } : {}), insertedBlockIds, uploadedMedia,
+        causeKind: error instanceof AppError ? error.kind : 'INVALID_RESPONSE',
+      });
+    }
+  }
+  async update(id: string, revision: number, change: { type: 'append'; content: Content } | { type: 'replace_text'; blockId: string; text: string }, signal?: AbortSignal, images?: LoadedImages) {
     const document = await this.metadata(id, signal);
     if (document.revision_id !== revision) throw new AppError('CONFLICT', 'Document changed after preparation. Read it again and prepare a new operation.');
-    if (change.type === 'append') await this.append(id, change.content, revision, signal);
+    if (change.type === 'append') await this.append(id, change.content, revision, signal, images);
     else await this.api.request('PATCH', `/docx/v1/documents/${id}/blocks/batch_update?document_revision_id=${revision}`,
       z.record(z.string(), z.unknown()), { scopes: [['docx:document:write_only', 'docx:document']], signal,
         body: { requests: [{ block_id: change.blockId, update_text_elements: { elements: [{ text_run: { content: change.text } }] } }] } });

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type ServerResponse } from 'node:http';
 import { AppError, BASE_SCOPES, type AuthMode, type Settings, withLock } from './core.js';
+import { MEDIA_UPLOAD_SCOPE } from './document-images.js';
 import { type CredentialStore, type Session, sessionSchema } from './credentials.js';
 import { boundedJson, type Fetch } from './http.js';
 
@@ -11,10 +12,10 @@ const tokenSchema = z.object({ code: z.literal(0), access_token: z.string().min(
   refresh_token: z.string().optional(), refresh_token_expires_in: z.number().positive().optional() });
 const identitySchema = z.object({ code: z.literal(0), data: z.object({ open_id: z.string().min(1), tenant_key: z.string().min(1) }) });
 export function equal(a: string | null, b: string) { return !!a && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b)); }
-export function authorize(appId: string, mode: AuthMode = 'confidential', offline = false) {
+export function authorize(appId: string, mode: AuthMode = 'confidential', offline = false, documentImages = false) {
   z.literal('confidential').parse(mode);
   const state = randomBytes(32).toString('base64url');
-  const scopes = [...BASE_SCOPES, ...(offline ? ['offline_access'] : [])];
+  const scopes = [...BASE_SCOPES, ...(offline ? ['offline_access'] : []), ...(documentImages ? [MEDIA_UPLOAD_SCOPE] : [])];
   const url = new URL('https://accounts.feishu.cn/open-apis/authen/v1/authorize');
   url.search = new URLSearchParams({ client_id: appId, response_type: 'code', redirect_uri: CALLBACK,
     scope: scopes.join(' '), state, prompt: 'consent' }).toString();
@@ -58,11 +59,11 @@ function send(res: ServerResponse, status: number, content: string) {
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'" });
   res.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>better-feishu-mcp login</title><style>:root{color-scheme:light}body{font:16px/1.6 system-ui;background:#f5f5f1;color:#202a28;max-width:650px;margin:60px auto;padding:24px}main{background:white;padding:28px;border-radius:14px}input{box-sizing:border-box;width:100%;padding:10px;margin:6px 0 18px}button{background:#21634c;color:white;padding:12px 22px;border:0;border-radius:6px}small{color:#65706b}</style><main>${content}</main></html>`);
 }
-export async function login(options: { config: Settings; store: CredentialStore; appId: string; mode?: AuthMode; offline: boolean;
+export async function login(options: { config: Settings; store: CredentialStore; appId: string; mode?: AuthMode; offline: boolean; documentImages?: boolean;
   replace: boolean; onReady: (url: string) => void; fetcher?: Fetch }): Promise<void> {
   const { config, store, appId, mode = 'confidential' } = options;
   const fetcher = options.fetcher ?? fetch;
-  const flow = authorize(appId, mode, options.offline);
+  const flow = authorize(appId, mode, options.offline, options.documentImages);
   const entry = '/' + randomBytes(24).toString('base64url');
   const csrf = randomBytes(32).toString('base64url'); const origin = new URL(CALLBACK).origin;
   let secret = ''; let started = false; let consumed = false; const deadline = Date.now() + 600_000;
@@ -72,17 +73,22 @@ export async function login(options: { config: Settings; store: CredentialStore;
     try {
       if (req.headers.host !== new URL(origin).host) return send(res, 403, 'Invalid host.');
       const url = new URL(req.url ?? '/', origin);
+      if (req.method === 'GET' && url.pathname === entry && started) return send(res, 200,
+        `<h1>Continue signing in</h1><p>Your App Secret was already accepted by this local form. It has not yet been validated by Feishu.</p><p><a href="${escape(flow.url)}">Continue to Feishu consent</a></p>`);
       if (req.method === 'GET' && url.pathname === entry && !started) return send(res, 200,
         `<h1>Connect Feishu as you</h1><p>App: <code>${escape(appId)}</code> · Profile: ${escape(config.profile)}</p><p>Confidential-client authentication: app secret + state, without PKCE.</p><p>${options.offline ? 'Persistent login requested: offline_access must be enabled in Feishu.' : 'No refresh token requested. Log in again when the session expires; use login --offline for persistent renewal.'}</p><form method="post" action="${entry}/start" autocomplete="off"><input type="hidden" name="csrf" value="${csrf}"><label>App Secret<input type="password" name="secret" required maxlength="512" autocomplete="off"></label><p><small>Stored only in your OS keychain after successful authorization. Selected results will be sent to your configured MCP client/model. No bot will join any chat.</small></p><button>Continue to Feishu consent</button></form>`);
       if (req.method === 'POST' && url.pathname === entry + '/start') {
-        if (req.headers.origin !== origin || started || Date.now() > deadline) return send(res, 403, 'Invalid origin or expired/reused login.');
+        if (req.headers.origin !== origin || consumed || Date.now() > deadline) return send(res, 403, 'Invalid origin or expired/reused login.');
         let body = '';
         for await (const chunk of req) { body += chunk; if (body.length > 4096) return send(res, 413, 'Request too large.'); }
         const fields = new URLSearchParams(body);
         if (!equal(fields.get('csrf'), csrf)) return send(res, 403, 'Invalid CSRF token.');
-        secret = fields.get('secret') ?? '';
-        if (!secret || secret.length > 512) { secret = ''; return send(res, 400, 'Invalid app secret.'); }
-        started = true;
+        // A double submit resumes the same flow; it must never replace the first secret.
+        if (!started) {
+          secret = fields.get('secret') ?? '';
+          if (!secret || secret.length > 512) { secret = ''; return send(res, 400, 'Invalid app secret.'); }
+          started = true;
+        }
         res.writeHead(303, { Location: flow.url, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }); return res.end();
       }
       if (req.method === 'GET' && url.pathname === '/callback') {

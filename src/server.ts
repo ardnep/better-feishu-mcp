@@ -92,17 +92,17 @@ export function createServer(app: Runtime) {
     z.object({ spreadsheetToken: spreadsheetSchema, sheetId: idSchema, range: cellRangeSchema, valueRenderOption: renderSchema.default('FormattedValue') }).strict(),
     (a, s) => app.sheets.read(a.spreadsheetToken, a.sheetId, a.range, a.valueRenderOption, s));
   if (app.config.writes) {
-    add('documents_create', 'Create a modern Feishu document directly using the existing user login. No local approval step. Up to 50 content blocks and 32000 characters; supports paragraphs, headings, lists, quotes and code. Do not blindly retry failed/uncertain creates.',
+    add('documents_create', 'Create a modern Feishu document directly using the existing user login. No local approval step. Up to 50 blocks and 32000 characters; supports text, headings, lists, quotes, code and local PNG/JPEG images. Image paths must be canonical absolute regular files: up to 10 images, 5 MB each / 20 MB total; requires media-upload scope. Images upload immediately. No URLs. Do not blindly retry failed/uncertain creates.',
       mutationSchema.options[0]!.omit({ type: true }), (a, s) => app.operations.execute({ type: 'create', ...a }, s), false);
-    add('documents_update', 'Directly append up to 50 blocks or replace one text block using the existing user login. No local approval step. Read documents_blocks first and supply the observed revision. Replacing text replaces rich text, not merges it. Do not blindly retry uncertain writes.',
+    add('documents_update', 'Directly append up to 50 blocks (including local PNG/JPEG images) or replace one text block using the existing user login. No local approval step. Image paths must be canonical absolute regular files: up to 10 images, 5 MB each / 20 MB total; requires media-upload scope. Images upload immediately. No URLs or existing-image replacement. Read documents_blocks first and supply the observed revision. Replacing text replaces rich text, not merges it. Do not blindly retry uncertain writes.',
       mutationSchema.options[1]!.omit({ type: true }), (a, s) => app.operations.execute({ type: 'update', ...a }, s), false);
     add('documents_delete', 'Move a document to the recycle bin directly using the existing user login. No local approval step. Requires its observed revision; this is not permanent erasure.',
       mutationSchema.options[2]!.omit({ type: true }), (a, s) => app.operations.execute({ type: 'delete', ...a }, s), false);
-    add('documents_prepare_create', 'Optional legacy approval workflow. Prefer documents_create for direct writes. Prepares up to 50 blocks for local terminal approval; no silent Markdown conversion.',
+    add('documents_prepare_create', 'Optional legacy approval workflow. Prefer documents_create for direct writes. Prepares up to 50 text/image blocks for local terminal approval. Local PNG/JPEG image hashes and metadata are bound to approval and rechecked before upload; media-upload scope is required. No URLs or silent Markdown conversion.',
       z.object({ title: z.string().min(1).max(800), folderId: idSchema.optional(), content: contentSchema.optional() }).strict(),
       (a, s) => app.operations.prepare({ type: 'create', ...a }, s), false);
     const update = mutationSchema.options[1]!;
-    add('documents_prepare_update', 'Optional legacy approval workflow. Prefer documents_update for direct writes. Prepare one append (up to 50 blocks) or text-block replacement with an observed revision. Rich text is replaced, not merged.',
+    add('documents_prepare_update', 'Optional legacy approval workflow. Prefer documents_update for direct writes. Prepare one append (up to 50 text/image blocks) or text-block replacement with an observed revision. Local PNG/JPEG images are hash-bound to approval and need media-upload scope. No existing-image replacement. Rich text is replaced, not merged.',
       update.omit({ type: true }), (a, s) => app.operations.prepare({ type: 'update', ...a }, s), false);
     add('documents_prepare_delete', 'Optional legacy approval workflow. Prefer documents_delete for direct deletion to the recycle bin. This prepared operation requires local terminal approval.',
       z.object({ documentId: docSchema, revision: z.number().int().positive() }).strict(), (a, s) => app.operations.prepare({ type: 'delete', ...a }, s), false);

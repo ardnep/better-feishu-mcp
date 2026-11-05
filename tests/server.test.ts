@@ -3,11 +3,14 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { runtime } from '../src/server.js';
 import { fakeFetch, json, MemoryStore, session, setup } from './helpers.js';
 
-async function connection(writes = false) {
+async function connection(writes = false, documentImages = false) {
   const env = await setup(writes); const credentials = session();
+  if (documentImages) credentials.scopes.push('docs:document.media:upload');
   const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('./fixtures/server.mjs', import.meta.url))],
     env: { ...process.env, BETTER_FEISHU_MCP_PROFILE: 'test', BETTER_FEISHU_MCP_STATE_DIR: env.config.stateDir,
       BETTER_FEISHU_MCP_ENABLE_WRITES: writes ? '1' : '0', TEST_SESSION_JSON: JSON.stringify(credentials) }, stderr: 'pipe' });
@@ -174,5 +177,34 @@ it('reads text and native image attachments over real MCP stdio', async () => {
     const invalid = await f.client.callTool({ name: 'messages_read_attachment', arguments: { ...args, resourceKey: '../../secret' } });
     expect(invalid.isError).toBe(true);
     expect(f.stderr()).not.toContain('synthetic-user-token');
+  } finally { await f.close(); }
+});
+it('prepares and commits native document images over real stdio with an exact local approval', async () => {
+  const f = await connection(true, true);
+  try {
+    const imagePath = join(f.config.stateDir, 'example.png');
+    await writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
+    const draft = output(await f.client.callTool({ name: 'documents_prepare_create', arguments: {
+      title: 'Illustrated fixture', content: [{ type: 'paragraph', text: 'Example' }, { type: 'image', path: imagePath, caption: 'Screenshot' }],
+    } }));
+    expect(draft.preview.images[0]).toMatchObject({ path: imagePath, mimeType: 'image/png', width: 1, height: 1 });
+    const denied = output(await f.client.callTool({ name: 'operations_commit', arguments: { operationId: draft.operationId } }));
+    expect(denied.error.kind).toBe('APPROVAL_REQUIRED');
+    const localApprover = runtime(f.config, new MemoryStore(f.credentials));
+    await localApprover.operations.approve(draft.operationId);
+    const committed = await f.client.callTool({ name: 'operations_commit', arguments: { operationId: draft.operationId } });
+    expect(committed.isError).not.toBe(true); expect(output(committed).documentId).toBe('fixtureDoc');
+    expect(f.stderr()).not.toContain('synthetic-user-token');
+  } finally { await f.close(); }
+});
+it('creates native document images directly over stdio without a local approval', async () => {
+  const f = await connection(true, true);
+  try {
+    const imagePath = join(f.config.stateDir, 'direct.png');
+    await writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
+    const result = await f.client.callTool({ name: 'documents_create', arguments: {
+      title: 'Direct image fixture', content: [{ type: 'image', path: imagePath }],
+    } });
+    expect(result.isError).not.toBe(true); expect(output(result).documentId).toBe('fixtureDoc');
   } finally { await f.close(); }
 });
