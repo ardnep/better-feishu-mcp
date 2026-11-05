@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { AppError, BASE_SCOPES, docSchema, profileSchema, requireScopes, safeError, settings, withLock } from '../src/core.js';
-import { Cursors, toBlocks } from '../src/services.js';
+import { contentSchema, Cursors, toBlocks } from '../src/services.js';
 import { setup } from './helpers.js';
 
 describe('input and policy boundaries', () => {
@@ -38,6 +38,11 @@ describe('input and policy boundaries', () => {
   });
 });
 describe('bounded output helpers', () => {
+  it('caps document content at the Feishu limit of 50 blocks', () => {
+    const blocks = Array.from({ length: 50 }, () => ({ type: 'paragraph' as const, text: 'x' }));
+    expect(contentSchema.parse(blocks)).toHaveLength(50);
+    expect(contentSchema.safeParse([...blocks, blocks[0]]).success).toBe(false);
+  });
   it('binds opaque cursors to the query and instance', () => {
     const cursors = new Cursors(); const id = cursors.put(['query', 1], 'provider-page')!;
     expect(cursors.get(['query', 1], id)).toBe('provider-page');

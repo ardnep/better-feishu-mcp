@@ -1,13 +1,13 @@
 # better-feishu-mcp
 
-A local TypeScript MCP that uses **your Feishu identity** to read messages and create/read/update/delete modern Feishu documents. Built from scratch against Feishu APIs—not a wrapper around another Feishu MCP or CLI.
+A local TypeScript MCP that uses **your Feishu identity** to read messages and online Sheets, and create/read/update/delete modern Feishu documents. Built from scratch against Feishu APIs—not a wrapper around another Feishu MCP or CLI.
 
 **Local alpha.** Real stdio-client message reads and a disposable-document CRUD cycle have passed on the tested Feishu China account. No remote hosting or public package/repository exists. License selection is pending; the package is private.
 
 - **No bot membership in chats.** App/bot registration may be required; adding the bot to a chat is not part of this implementation.
 - **No tenant-token fallback.** Unsupported or missing user access fails explicitly.
 - **No message sending or document search.** Those scopes required approval and are excluded.
-- **Writes off by default.** Enabling them still requires approval of each exact operation outside MCP.
+- **Writes off by default.** When enabled, direct document tools use your existing login, without per-edit terminal approval. The old approval workflow remains optional.
 
 For a scannable light-mode overview, open [setup and current status](docs/review/setup.html). See [security boundaries](SECURITY.md) before use.
 
@@ -40,14 +40,14 @@ Start the login form in your browser; enter the App Secret there, **not in argv,
 node dist/cli.js login --app-id cli_YOUR_APP_ID
 ```
 
-Default login uses S256 PKCE plus the app secret. The tested account rejected PKCE with code `20049`; its cause remains unresolved. The user-approved alternative succeeded:
+Login always uses confidential-client OAuth (app secret + state, without PKCE). Agents and users do not need to choose a mode:
 
 ```sh
 BETTER_FEISHU_MCP_BROWSER=Zen node dist/cli.js login \
-  --app-id cli_YOUR_APP_ID --auth-mode confidential
+  --app-id cli_YOUR_APP_ID
 ```
 
-`--auth-mode confidential` is an **explicit non-PKCE choice**, not automatic fallback. Both modes use state, an exact loopback callback, user consent and confidential-client credentials. On success, the app secret, user tokens and identity binding are stored in the OS keychain. A profile cannot change app/user/tenant without `--replace` or a separate profile.
+The old `--auth-mode confidential` flag is accepted for compatibility, but is unnecessary; `--auth-mode pkce` is rejected. Legacy PKCE credential records can still be read so upgrading does not discard an existing login. State, an exact loopback callback and user consent remain required. On success, the app secret, user tokens and identity binding are stored in the OS keychain. A profile cannot change app/user/tenant without `--replace` or a separate profile.
 
 ```sh
 node dist/cli.js status
@@ -56,6 +56,8 @@ node dist/cli.js logout
 ```
 
 No refresh token is requested by default: re-login after expiry. `login --offline` explicitly requests `offline_access` if your app is allowed that scope. Rotation is serialized and marked uncertain before the one-use refresh token is sent; ambiguous failures require re-login, never a blind retry. Live refresh is not yet verified. Logout removes local credentials, not the provider-side grant—revoke that separately in Feishu's App authorization management.
+
+Multiple MCP processes/sessions using the same profile and state directory share the OS-keychain login. Re-login to the **same app/user/tenant** is picked up automatically on their next API call; it does not require restarting or logging in separately in every session. Explicitly switching identity still requires restarting bound MCP processes. Re-login invalidates previously approved legacy drafts. `LOGIN_REQUIRED` due to expiry without a refresh token is different from `RESTART_REQUIRED` due to an identity switch. To avoid routine expiry prompts, enable `offline_access` in the app and explicitly use `login --offline`; persistent renewal is not enabled silently. Use the same state directory across processes so credential refresh shares one lock.
 
 ## Connect an MCP client
 
@@ -76,7 +78,7 @@ Use the client's local **stdio** integration. Replace the path below with the ac
 }
 ```
 
-Client configuration formats differ; the important fields are command, args and environment. This project does **not** change your global client configuration. Restart the MCP process after a new login. Protocol-only stdout; diagnostics on stderr. Both modern and legacy stdio openings are served by the SDK adapter.
+Client configuration formats differ; the important fields are command, args and environment. This project does **not** change your global client configuration. Restart/reconnect after rebuilding, changing server environment or switching identity—not after renewing the same account's login. Protocol-only stdout; diagnostics on stderr. Both modern and legacy stdio openings are served by the SDK adapter.
 
 ## Tools
 
@@ -92,8 +94,32 @@ Client configuration formats differ; the important fields are command, args and 
 | `documents_get` | Modern Docx metadata and revision |
 | `documents_read` | Plain text capped at 100000 characters |
 | `documents_blocks` | Structured blocks with opaque, revision-bound cursors |
+| `sheets_get` | Spreadsheet metadata from a token or direct Sheets link |
+| `sheets_list` | Tab IDs, titles, visibility and grid sizes |
+| `sheets_read` | Explicit cell-range reads, up to 10000 cells |
 
 Group history/get/search have passed live tests in the sole-user fixture chat with bot absence verified in the Feishu UI. P2p, thread and normal multi-person group cases remain unverified; scope support does not override tenant or resource restrictions.
+
+### Online Sheets (read-only)
+
+Enable the user scope `sheets:spreadsheet:readonly` in your Feishu app, then log in again using your existing app. Same-account reauthorization is picked up automatically by running MCP processes; reconnect after rebuilding to discover the tools. Existing tokens do not gain the scope automatically. Whether app/tenant approval is required must be checked in your app console; it has not been verified for this scope. No permission settings are changed automatically.
+
+1. Call `sheets_get` with `spreadsheetToken`: either the token or `https://<tenant>.feishu.cn/sheets/<token>`.
+2. Call `sheets_list` with the same input to find each tab's `sheet_id`.
+3. Call `sheets_read`, for example:
+
+```json
+{
+  "spreadsheetToken": "SPREADSHEET_TOKEN",
+  "sheetId": "TAB_ID",
+  "range": "A1:D100",
+  "valueRenderOption": "FormattedValue"
+}
+```
+
+Use explicit ascending A1 cell ranges (or a single cell), not tab titles, whole rows/columns or an entire sheet. Reads are capped at 10000 cells, 2 MB provider responses and 512 KB MCP results; request a smaller range if a byte limit is exceeded. Trailing empty cells may be omitted, and typed/rich cell values are preserved as returned by Feishu. `valueRenderOption` defaults to `FormattedValue`; `UnformattedValue`, `Formula` and `ToString` are also available. Dates request formatted strings. Feishu's API does not support calculated cross-sheet reference or array formula results.
+
+All tools use only your user token and existing resource access, mark spreadsheet content as untrusted, and are available with writes disabled. No sheet writes, Wiki resolution, Base/Bitable access, Excel attachment parsing or sheet search is included. Metadata/tab/range APIs and real MCP stdio are tested with synthetic data; **live Sheets reads remain unverified** pending authorization and a target spreadsheet.
 
 ### Message attachments
 
@@ -120,7 +146,19 @@ Attachment functionality is covered by synthetic API tests, actual PDF/DOCX pars
 
 ### Document writes
 
-Set `BETTER_FEISHU_MCP_ENABLE_WRITES=1` **in the MCP server environment** to expose:
+Set `BETTER_FEISHU_MCP_ENABLE_WRITES=1` **in the MCP server environment**, then reconnect it. Use the same Feishu login as message/document reads—no separate document authentication or local approval is required:
+
+- `documents_create`: title, optional parent folder and content (up to **50 blocks**, 32000 total characters).
+- `documents_update`: observed revision plus one append (up to **50 blocks**) or text-block replacement.
+- `documents_delete`: observed revision; moves the document to the recycle bin, not permanent erasure.
+
+Read `documents_blocks` before editing to get the revision and block IDs. The same OAuth user token, scope checks, resource ACLs, revision checks and per-target local locks apply. If the existing login lacks a required scope, explicitly reauthorize that same login; there is no additional docs login flow. Direct writes do not create approval drafts or local operation receipts. Failed/uncertain writes are not automatically retried; inspect the document before retrying, especially after a create or append failure.
+
+Enabling writes gives the connected MCP client permission to mutate documents accessible to your account. The server no longer requires terminal confirmation for direct writes; use your client's tool permissions/confirmation settings if you want interactive review.
+
+#### Optional legacy prepare/approve/commit workflow
+
+For clients that still use exact local approvals, the following tools remain available with writes enabled:
 
 - `documents_prepare_create`: title, optional parent folder, optional structured content.
 - `documents_prepare_update`: observed revision plus one append or text-block replacement.
@@ -141,11 +179,11 @@ For this local checkout the command is:
 node /absolute/path/to/better-feishu-mcp/dist/cli.js approve OPERATION_ID --profile default
 ```
 
-No MCP tool can approve a write. Approval signatures are bound to payload, target, expiry and login identity using a key held in the OS keychain. Relogin invalidates prior drafts. A model-supplied `confirm: true` is not accepted.
+No MCP tool can approve a legacy draft. Its approval signatures are bound to payload, target, expiry and login identity using a key held in the OS keychain. Relogin invalidates prior drafts. A model-supplied `confirm: true` is not accepted. This optional process is not required by `documents_create`, `documents_update` or `documents_delete`.
 
 Content creation supports paragraphs, headings, bullets, ordered lists, quotes and code blocks. Basic paragraph create/read/replace/delete is live-tested; other block types are contract/unit-tested only. No lossless Markdown round trip, table/media editing, Wiki lifecycle or legacy Docs claim. Replacing a block's text replaces its rich-text elements; unrelated blocks are left alone. Revision preflight is **best-effort**, not an atomic multi-user transaction guarantee.
 
-Writes are claimed before the network request and never automatically replayed. A failed content insertion returns the created document ID for recovery. An ambiguous create timeout may require manually checking recent documents. There is no automatic rollback or permanent deletion.
+Legacy drafts are claimed before the network request and never automatically replayed. Neither workflow automatically retries writes. A failed content insertion returns the created document ID for recovery. An ambiguous create timeout may require manually checking recent documents. There is no automatic rollback or permanent deletion.
 
 ## State and privacy
 
@@ -159,9 +197,9 @@ The server is **not an OS sandbox**. An agent with unrestricted shell/keychain a
 
 ## Permissions
 
-User scopes: `search:message`, `im:chat:read`, `im:message:readonly`, `im:message.group_msg:get_as_user`, `im:message.p2p_msg:get_as_user`, `docx:document:readonly`, `docx:document:create`, `docx:document:write_only`, `space:document:delete`.
+User scopes: `search:message`, `im:chat:read`, `im:message:readonly`, `im:message.group_msg:get_as_user`, `im:message.p2p_msg:get_as_user`, `docx:document:readonly`, `docx:document:create`, `docx:document:write_only`, `space:document:delete`, `sheets:spreadsheet:readonly`.
 
-No `search:docs:read`, `im:message.send_as_user` or tenant-token access is requested. On the tested app, the nine retained scopes were Added without another release; scope eligibility can differ elsewhere.
+No `search:docs:read`, `im:message.send_as_user` or tenant-token access is requested. On the tested app, the original nine scopes were Added without another release; the new Sheets scope's approval requirements remain unverified. Scope eligibility can differ elsewhere.
 
 ## Validation and release status
 

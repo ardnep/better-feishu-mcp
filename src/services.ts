@@ -10,7 +10,7 @@ const raw = z.object({ content: z.string() });
 export const contentSchema = z.array(z.object({
   type: z.enum(['paragraph', 'heading', 'bullet', 'ordered', 'quote', 'code']),
   text: z.string().min(1).max(10_000), level: z.number().int().min(1).max(6).optional(),
-}).strict()).min(1).max(100).refine(blocks => blocks.reduce((n, b) => n + b.text.length, 0) <= 32_000, 'Total content limit is 32000 characters.');
+}).strict()).min(1).max(50).refine(blocks => blocks.reduce((n, b) => n + b.text.length, 0) <= 32_000, 'Total content limit is 32000 characters.');
 export type Content = z.infer<typeof contentSchema>;
 export function toBlocks(content: Content) {
   return content.map(block => {

@@ -6,6 +6,8 @@ export const sessionSchema = z.object({
   appId: z.string().regex(/^cli_[A-Za-z0-9]+$/), appSecret: z.string().min(1).max(512),
   userId: z.string().min(1), tenantId: z.string().min(1), loginId: z.string().uuid(),
   approvalKey: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  // Read legacy PKCE credential records so upgrades do not discard existing logins.
+  // New logins always use confidential-client authentication.
   authMode: z.enum(['pkce', 'confidential']), accessToken: z.string().min(1).max(32768),
   expiresAt: z.number().int().positive(), scopes: z.array(z.string()).max(200),
   refreshToken: z.string().max(32768).optional(), refreshExpiresAt: z.number().optional(),

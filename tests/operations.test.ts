@@ -20,7 +20,7 @@ async function fixture(writes = true) {
   return { ...env, store, documents, operations: new Operations(env.config, manager, documents),
     counts: () => ({ creates, mutations }), changeRevision: () => { revision++; } };
 }
-it('blocks all mutations without an exact local approval and consumes them once', async () => {
+it('blocks legacy draft commits without an exact local approval and consumes them once', async () => {
   const f = await fixture();
   try {
     const draft = await f.operations.prepare({ type: 'create', title: 'fixture' });
@@ -33,6 +33,45 @@ it('blocks all mutations without an exact local approval and consumes them once'
     const receipts = await readdir(join(f.config.stateDir, 'test', 'operations'));
     expect(receipts).toEqual([draft.operationId + '.json.receipt']);
   } finally { await f.cleanup(); }
+});
+it('executes direct create/update/delete using one login without approval drafts', async () => {
+  const f = await fixture();
+  try {
+    expect(await f.operations.execute({ type: 'create', title: 'fixture' })).toMatchObject({ documentId: 'testDoc' });
+    expect(await f.operations.execute({ type: 'update', documentId: 'testDoc', revision: 1, change: { type: 'append', content: [{ type: 'paragraph', text: 'x' }] } })).toMatchObject({ changed: true });
+    expect(await f.operations.execute({ type: 'update', documentId: 'testDoc', revision: 1, change: { type: 'replace_text', blockId: 'block', text: 'new' } })).toMatchObject({ changed: true });
+    expect(await f.operations.execute({ type: 'delete', documentId: 'testDoc', revision: 1 })).toMatchObject({ deleted: true });
+    expect(f.counts()).toEqual({ creates: 1, mutations: 4 });
+    expect(await readdir(join(f.config.stateDir, 'test'))).not.toContain('operations');
+  } finally { await f.cleanup(); }
+});
+it('retains write opt-in, scopes, validation and revision checks for direct operations', async () => {
+  const disabled = await fixture(false); const f = await fixture();
+  try {
+    await expect(disabled.operations.execute({ type: 'create', title: 'fixture' })).rejects.toMatchObject({ kind: 'WRITES_DISABLED' });
+    f.store.value!.scopes = ['docx:document:create'];
+    await expect(f.operations.execute({ type: 'create', title: 'fixture', content: [{ type: 'paragraph', text: 'x' }] })).rejects.toMatchObject({ kind: 'MISSING_SCOPE' });
+    f.store.value = session(); f.changeRevision();
+    await expect(f.operations.execute({ type: 'update', documentId: 'testDoc', revision: 1, change: { type: 'replace_text', blockId: 'block', text: 'new' } })).rejects.toMatchObject({ kind: 'CONFLICT' });
+    await expect(f.operations.execute({ type: 'delete', documentId: 'testDoc', revision: 1 })).rejects.toMatchObject({ kind: 'CONFLICT' });
+    const content = Array.from({ length: 51 }, () => ({ type: 'paragraph' as const, text: 'x' }));
+    await expect(f.operations.execute({ type: 'create', title: 'fixture', content })).rejects.toThrow();
+    await expect(f.operations.prepare({ type: 'create', title: 'fixture', content })).rejects.toThrow();
+    expect(f.counts().mutations).toBe(0);
+  } finally { await disabled.cleanup(); await f.cleanup(); }
+});
+it('requires an existing login and never retries an uncertain direct create', async () => {
+  const env = await setup(); const store = new MemoryStore(null); let calls = 0;
+  const manager = new SessionManager(store, env.config);
+  const documents = new Documents(new FeishuHttp(() => manager.token(), fakeFetch(() => { calls++; throw new Error('lost response'); }), 0));
+  const operations = new Operations(env.config, manager, documents);
+  try {
+    await expect(operations.execute({ type: 'create', title: 'fixture' })).rejects.toMatchObject({ kind: 'LOGIN_REQUIRED' });
+    expect(calls).toBe(0);
+    await store.save(session());
+    await expect(operations.execute({ type: 'create', title: 'fixture' })).rejects.toMatchObject({ kind: 'NETWORK_ERROR' });
+    expect(calls).toBe(1);
+  } finally { await env.cleanup(); }
 });
 it('rejects write-disabled configuration, missing grants and stale revisions', async () => {
   const disabled = await fixture(false); const f = await fixture();

@@ -22,7 +22,7 @@ async function main() {
     console.log(`better-feishu-mcp ${VERSION}
 
 Commands:
-  login --app-id cli_... [--auth-mode pkce|confidential] [--offline] [--replace] [--no-open]
+  login --app-id cli_... [--offline] [--replace] [--no-open]
   status
   doctor [--probe-keychain]
   logout
@@ -30,8 +30,9 @@ Commands:
   approve <operation-id>
 
 All commands accept --profile <name>. No secrets on argv. Feishu China only.
-Default authentication is PKCE; confidential is an explicit non-PKCE selection.
-Writes require BETTER_FEISHU_MCP_ENABLE_WRITES=1 on the server AND local approval.
+Authentication always uses confidential-client mode; no mode selection is needed.
+Writes require BETTER_FEISHU_MCP_ENABLE_WRITES=1 on the server; direct tools use the existing login.
+The optional prepare/commit workflow still requires local approval.
 Configure callback: ${CALLBACK}`); return;
   }
   const config = settings({ ...process.env, ...(values.profile ? { BETTER_FEISHU_MCP_PROFILE: values.profile } : {}) });
@@ -65,12 +66,14 @@ Configure callback: ${CALLBACK}`); return;
   }
   if (command === 'login') {
     const appId = z.string().regex(/^cli_[A-Za-z0-9]+$/).parse(values['app-id'] ?? (await store.load())?.appId);
-    const mode = z.enum(['pkce', 'confidential']).parse(values['auth-mode'] ?? 'pkce');
+    // Retain the old confidential flag as a compatible alias; PKCE is no longer supported.
+    if (values['auth-mode'] !== undefined && values['auth-mode'] !== 'confidential') throw new AppError('INVALID_AUTH_MODE', 'Only confidential-client authentication is supported. Omit --auth-mode.');
+    const mode = 'confidential' as const;
     await login({ config, store, appId, mode, offline: !!values.offline, replace: !!values.replace,
       onReady(url) {
         console.log(`Open this local credential form: ${url}`);
         console.log(`Registered callback must be exactly ${CALLBACK}`);
-        if (mode === 'confidential') console.log('Explicit confidential-client OAuth without PKCE. No automatic fallback is enabled.');
+        console.log('Confidential-client OAuth without PKCE. No mode selection is needed.');
         if (!values['no-open']) {
           const browser = process.env.BETTER_FEISHU_MCP_BROWSER;
           if (browser && !/^[A-Za-z0-9 _-]{1,64}$/.test(browser)) throw new AppError('INVALID_BROWSER', 'Invalid browser app name.');
@@ -81,7 +84,7 @@ Configure callback: ${CALLBACK}`); return;
           child.on('error', () => console.error('Browser did not open. Use the local URL printed above.')); child.unref();
         }
       } });
-    console.log('Connected. Credentials saved in OS keychain. Restart running MCP processes.'); return;
+    console.log('Connected. Credentials saved in OS keychain. Running MCP sessions reuse renewed credentials for the same identity; restart only after switching app/user/tenant.'); return;
   }
   if (command === 'approve') {
     const id = positionals[1]; if (!id) throw new AppError('INVALID_ARGUMENT', 'Provide an operation ID.');
