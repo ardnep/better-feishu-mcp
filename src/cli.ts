@@ -12,7 +12,7 @@ import { createServer, runtime, status, VERSION } from './server.js';
 
 const { positionals, values } = parseArgs({ allowPositionals: true, strict: true, options: {
   profile: { type: 'string' }, 'app-id': { type: 'string' }, 'auth-mode': { type: 'string' },
-  offline: { type: 'boolean' }, replace: { type: 'boolean' }, 'no-open': { type: 'boolean' },
+  offline: { type: 'boolean' }, 'document-images': { type: 'boolean' }, replace: { type: 'boolean' }, 'no-open': { type: 'boolean' },
   stdio: { type: 'boolean' }, 'probe-keychain': { type: 'boolean' }, version: { type: 'boolean' }, help: { type: 'boolean' },
 } });
 async function main() {
@@ -22,7 +22,7 @@ async function main() {
     console.log(`better-feishu-mcp ${VERSION}
 
 Commands:
-  login --app-id cli_... [--auth-mode pkce|confidential] [--offline] [--replace] [--no-open]
+  login --app-id cli_... [--auth-mode pkce|confidential] [--offline] [--document-images] [--replace] [--no-open]
   status
   doctor [--probe-keychain]
   logout
@@ -66,7 +66,7 @@ Configure callback: ${CALLBACK}`); return;
   if (command === 'login') {
     const appId = z.string().regex(/^cli_[A-Za-z0-9]+$/).parse(values['app-id'] ?? (await store.load())?.appId);
     const mode = z.enum(['pkce', 'confidential']).parse(values['auth-mode'] ?? 'pkce');
-    await login({ config, store, appId, mode, offline: !!values.offline, replace: !!values.replace,
+    await login({ config, store, appId, mode, offline: !!values.offline, documentImages: !!values['document-images'], replace: !!values.replace,
       onReady(url) {
         console.log(`Open this local credential form: ${url}`);
         console.log(`Registered callback must be exactly ${CALLBACK}`);
@@ -88,7 +88,7 @@ Configure callback: ${CALLBACK}`); return;
     if (!process.stdin.isTTY || !process.stdout.isTTY) throw new AppError('TRUSTED_TERMINAL_REQUIRED', 'Approval requires an interactive trusted human terminal, not piped confirmation.');
     const preview = await app.operations.inspect(id);
     console.log(JSON.stringify(preview, null, 2));
-    console.log('Review the exact target/content above. Delete means recycle bin, not permanent erasure.');
+    console.log('Review the exact target/content above. For images, inspect the local files and their SHA-256/size/dimensions. Changed bytes require a new draft. Delete means recycle bin, not permanent erasure.');
     const prompt = createInterface({ input: process.stdin, output: process.stdout });
     try {
       const expected = 'approve ' + id.slice(0, 8);

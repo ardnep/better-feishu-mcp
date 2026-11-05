@@ -143,7 +143,41 @@ node /absolute/path/to/better-feishu-mcp/dist/cli.js approve OPERATION_ID --prof
 
 No MCP tool can approve a write. Approval signatures are bound to payload, target, expiry and login identity using a key held in the OS keychain. Relogin invalidates prior drafts. A model-supplied `confirm: true` is not accepted.
 
-Content creation supports paragraphs, headings, bullets, ordered lists, quotes and code blocks. Basic paragraph create/read/replace/delete is live-tested; other block types are contract/unit-tested only. No lossless Markdown round trip, table/media editing, Wiki lifecycle or legacy Docs claim. Replacing a block's text replaces its rich-text elements; unrelated blocks are left alone. Revision preflight is **best-effort**, not an atomic multi-user transaction guarantee.
+Content creation supports paragraphs, headings, bullets, ordered lists, quotes, code blocks and the inline images described below. Basic paragraph create/read/replace/delete is live-tested; other block types are contract/unit-tested only. No lossless Markdown round trip, table editing, existing-image replacement, Wiki lifecycle or legacy Docs claim. Replacing a block's text replaces its rich-text elements; unrelated blocks are left alone. Revision preflight is **best-effort**, not an atomic multi-user transaction guarantee.
+
+### Inline document images
+
+Create and append operations also support **PNG/JPEG images interleaved with text**, rendered as native Feishu image blocks—not links or attachments. Replacing an existing image, importing HTML/Markdown, and other media formats are not implemented.
+
+```json
+{
+  "title": "Calibration guide",
+  "content": [
+    { "type": "heading", "text": "Check the mounting", "level": 2 },
+    { "type": "paragraph", "text": "Verify the physical mounting before calibration." },
+    {
+      "type": "image",
+      "path": "/absolute/path/to/01-mounting.png",
+      "caption": "Mounting settings — offline menu example"
+    }
+  ]
+}
+```
+
+- The path is **on the MCP server machine**, not the remote client. Only canonical absolute regular-file paths are accepted; URLs and symlink components are rejected. Image formats/dimensions are checked from headers, not extensions. The server does not decode or execute image contents.
+- Limits: **10 images**, **5 MB each**, **20 MB total** per operation; **20000 pixels per side / 40 million pixels**. No chunked upload or new dependency is needed.
+- Preparation reads the files locally, without uploading. The preview/CLI approval includes each path, upload filename, MIME, byte size, dimensions and SHA-256. Inspect the actual local images before approving. The signed approval binds these details and the document content; approval and commit reread the images. Modified images require a new draft. Exact verified buffers are uploaded only during commit.
+- The sequence is create block → upload to that block (`docx_image`, with the document route token) → `replace_image`. Uploads are serialized and never automatically retried. A partial failure exposes the document/block IDs and any known uploaded media tokens in the error/receipt for recovery; it does not roll back, replay, or silently delete the document.
+
+Image upload requires the additional user scope **`docs:document.media:upload`**. Enable it in the Feishu app's permission settings, then explicitly reauthorize:
+
+```sh
+node dist/cli.js login --app-id cli_YOUR_APP_ID --document-images
+```
+
+Preserve your existing authentication mode/profile options (for example, `--auth-mode confidential`). This flag adds only the media-upload scope; it does not enable writes or approve operations. Default login scopes are unchanged. Existing broader grants accepted by Feishu are recognized, but no scope or identity fallback is performed. Reconnect the MCP after reauthorization/rebuilding; keep the separate `BETTER_FEISHU_MCP_ENABLE_WRITES=1` and trusted local approval gates.
+
+**Validation:** image creation/append, multipart requests, changed-file refusal, local approval, missing scopes and partial failures are tested with synthetic APIs and actual local screenshot headers. On 2026-11-05, a human-approved guide with 35 content blocks and five PNG images was created through the live MCP. Readback verified all five image tokens, dimensions and captions at revision 7. Visual rendering, live append and failure recovery remain unverified. API references: [upload media](https://open.feishu.cn/document/server-docs/docs/drive-v1/media/upload_all), [upload-point binding](https://open.feishu.cn/document/server-docs/docs/drive-v1/media/introduction), [image-block update](https://open.feishu.cn/document/server-docs/docs/docs/docx-v1/document-block/patch).
 
 Writes are claimed before the network request and never automatically replayed. A failed content insertion returns the created document ID for recovery. An ambiguous create timeout may require manually checking recent documents. There is no automatic rollback or permanent deletion.
 

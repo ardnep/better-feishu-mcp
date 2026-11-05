@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { AppError, requireScopes } from './core.js';
 import type { Session } from './credentials.js';
+import { MEDIA_UPLOAD_SCOPES } from './document-images.js';
 
 export type Fetch = typeof globalThis.fetch;
 export async function boundedBytes(response: Response, maximum = 2_000_000): Promise<Buffer> {
@@ -34,6 +35,7 @@ const envelope = z.object({ code: z.number(), data: z.unknown().optional(), erro
 }).optional() });
 export class FeishuHttp {
   private queue: Promise<void> = Promise.resolve();
+  private mediaQueue: Promise<void> = Promise.resolve();
   private lastRequest = 0;
   constructor(private readonly getSession: () => Promise<Session>, private readonly fetcher: Fetch = fetch,
     private readonly spacingMs = 400) {}
@@ -43,6 +45,15 @@ export class FeishuHttp {
   }
   async download(path: string, options: RequestOptions = {}): Promise<Buffer> {
     return z.instanceof(Buffer).parse(await this.perform('GET', path, options, true));
+  }
+  async uploadMedia(form: FormData, signal?: AbortSignal): Promise<{ file_token: string }> {
+    const previous = this.mediaQueue;
+    const task = previous.then(() => this.request('POST', '/drive/v1/medias/upload_all',
+      z.object({ file_token: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/) }), {
+        body: form, scopes: MEDIA_UPLOAD_SCOPES, signal,
+      }));
+    this.mediaQueue = task.then(() => {}, () => {});
+    return task;
   }
   private async perform(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string,
     options: RequestOptions, binary = false): Promise<unknown> {
@@ -62,9 +73,10 @@ export class FeishuHttp {
       this.queue = slot.catch(() => {}); await slot;
       let response: Response;
       try {
+        const multipart = options.body instanceof FormData;
         response = await this.fetcher(url, { method, redirect: 'error', signal,
-          headers: { Authorization: `Bearer ${session.accessToken}`, 'Content-Type': 'application/json' },
-          ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }) });
+          headers: { Authorization: `Bearer ${session.accessToken}`, ...(!multipart ? { 'Content-Type': 'application/json' } : {}) },
+          ...(options.body === undefined ? {} : { body: multipart ? options.body as FormData : JSON.stringify(options.body) }) });
       } catch {
         throw new AppError(signal.aborted ? 'CANCELLED' : 'NETWORK_ERROR', method === 'GET' || options.safeRead
           ? 'Read request failed or was cancelled.' : 'Write outcome may be unknown. Inspect the target before retrying.');

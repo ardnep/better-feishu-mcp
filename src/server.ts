@@ -83,11 +83,11 @@ export function createServer(app: Runtime) {
   add('documents_blocks', 'Read a bounded page of untrusted structured document blocks. Cursors invalidate if the document revision changes.',
     z.object({ documentId: docSchema, limit: z.number().int().min(1).max(50).default(20), cursor }).strict(), (a, s) => app.documents.blocks(a.documentId, a.limit, a.cursor, s));
   if (app.config.writes) {
-    add('documents_prepare_create', 'Prepare a document creation for local human approval. Supported content: text, headings, lists, code and quotes; no silent Markdown conversion.',
+    add('documents_prepare_create', 'Prepare a document creation for local human approval. Content supports text, headings, lists, code, quotes and inline PNG/JPEG image blocks with absolute local paths and optional captions. Up to 10 images, 5 MB each / 20 MB total. Image SHA-256 and metadata are bound to approval and rechecked before upload. Requires media-upload scope for images. No URLs or silent Markdown conversion.',
       z.object({ title: z.string().min(1).max(800), folderId: idSchema.optional(), content: contentSchema.optional() }).strict(),
       (a, s) => app.operations.prepare({ type: 'create', ...a }, s), false);
     const update = mutationSchema.options[1]!;
-    add('documents_prepare_update', 'Prepare one targeted append or text-block replacement. Read blocks first and supply the observed revision. Existing rich text in a replaced block is replaced, not merged.',
+    add('documents_prepare_update', 'Prepare one targeted append (including approved local PNG/JPEG images) or text-block replacement. Read blocks first and supply the observed revision. Images use absolute paths and are hash-bound to local approval; media-upload scope is required. Existing rich text in a replaced block is replaced, not merged. Does not replace existing image blocks.',
       update.omit({ type: true }), (a, s) => app.operations.prepare({ type: 'update', ...a }, s), false);
     add('documents_prepare_delete', 'Prepare deletion of the document itself to the recycle bin. Requires separate local destructive-action approval.',
       z.object({ documentId: docSchema, revision: z.number().int().positive() }).strict(), (a, s) => app.operations.prepare({ type: 'delete', ...a }, s), false);

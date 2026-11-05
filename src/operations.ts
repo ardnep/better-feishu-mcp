@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { AppError, docSchema, idSchema, privateDir, requireScopes, type Settings, withLock } from './core.js';
 import { type Session, SessionManager } from './credentials.js';
 import { contentSchema, Documents, fingerprint } from './services.js';
+import { hasImages, imageManifestSchema, loadImages, MEDIA_UPLOAD_SCOPES } from './document-images.js';
 
 export const mutationSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('create'), title: z.string().min(1).max(800), folderId: idSchema.optional(), content: contentSchema.optional() }).strict(),
@@ -19,10 +20,11 @@ export const mutationSchema = z.discriminatedUnion('type', [
 export type Mutation = z.infer<typeof mutationSchema>;
 const operationId = z.string().regex(/^[A-Za-z0-9_-]{32}$/);
 const draftSchema = z.object({ id: operationId, owner: z.string().length(64), createdAt: z.number(), expiresAt: z.number(),
-  payload: mutationSchema, title: z.string().max(800), hash: z.string().length(64), signature: z.string().optional() }).strict();
+  payload: mutationSchema, title: z.string().max(800), images: imageManifestSchema.optional(), hash: z.string().length(64), signature: z.string().optional() }).strict();
 type Draft = z.infer<typeof draftSchema>;
 function owner(session: Session) { return fingerprint([session.region, session.appId, session.tenantId, session.userId, session.loginId]); }
-function unsigned(draft: Draft) { return { id: draft.id, owner: draft.owner, createdAt: draft.createdAt, expiresAt: draft.expiresAt, payload: draft.payload, title: draft.title }; }
+function unsigned(draft: Draft) { return { id: draft.id, owner: draft.owner, createdAt: draft.createdAt, expiresAt: draft.expiresAt, payload: draft.payload, title: draft.title,
+  ...(draft.images ? { images: draft.images } : {}) }; }
 function signature(draft: Draft, session: Session) { return createHmac('sha256', session.approvalKey).update(JSON.stringify(unsigned(draft))).digest('hex'); }
 function same(a: string, b: string) { return a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b)); }
 function checkScopes(session: Session, payload: Mutation) {
@@ -31,7 +33,9 @@ function checkScopes(session: Session, payload: Mutation) {
   ]);
   else requireScopes(session.scopes, [['docx:document:readonly', 'docx:document'], payload.type === 'update'
     ? ['docx:document:write_only', 'docx:document'] : ['space:document:delete', 'drive:drive']]);
+  if (hasImages(content(payload))) requireScopes(session.scopes, MEDIA_UPLOAD_SCOPES);
 }
+function content(payload: Mutation) { return payload.type === 'create' ? payload.content : payload.type === 'update' && payload.change.type === 'append' ? payload.change.content : undefined; }
 export class Operations {
   constructor(private readonly config: Settings, private readonly sessions: SessionManager, private readonly documents: Documents) {}
   private root() { return join(this.config.stateDir, this.config.profile, 'operations'); }
@@ -46,6 +50,7 @@ export class Operations {
     } catch { throw new AppError('OPERATION_NOT_FOUND', 'Unknown or already consumed operation. Writes are never replayed automatically.'); }
     const draft = draftSchema.parse(JSON.parse(text));
     if (draft.id !== id || draft.hash !== fingerprint(unsigned(draft))) throw new AppError('INVALID_OPERATION', 'Prepared operation was modified.');
+    if (hasImages(content(draft.payload)) && !draft.images?.length) throw new AppError('INVALID_OPERATION', 'Image operation is missing its approval manifest.');
     if (draft.expiresAt <= Date.now()) { await rm(this.path(id), { force: true }); throw new AppError('OPERATION_EXPIRED', 'Prepared operation expired. Prepare it again.'); }
     return draft;
   }
@@ -59,6 +64,7 @@ export class Operations {
     const payload = mutationSchema.parse(input);
     const session = await this.sessions.token();
     checkScopes(session, payload);
+    const { manifest } = await loadImages(content(payload), undefined, signal);
     let title = payload.type === 'create' ? payload.title : '';
     if (payload.type !== 'create') {
       const document = await this.documents.metadata(payload.documentId, signal); title = document.title;
@@ -73,10 +79,13 @@ export class Operations {
         try { await this.load(name.slice(0, -5)); active++; } catch (error) { if (!(error instanceof AppError) || error.kind !== 'OPERATION_EXPIRED') throw error; }
       }
       if (active >= 64) throw new AppError('OPERATION_LIMIT', 'Too many pending drafts. Review or let them expire.');
-      const base = { id: randomBytes(24).toString('base64url'), owner: owner(session), createdAt: Date.now(), expiresAt: Date.now() + 600_000, payload, title };
+      const base = { id: randomBytes(24).toString('base64url'), owner: owner(session), createdAt: Date.now(), expiresAt: Date.now() + 600_000, payload, title,
+        ...(manifest.length ? { images: manifest } : {}) };
       const draft: Draft = { ...base, hash: fingerprint(base) };
-      await writeFile(this.path(draft.id), JSON.stringify(draft), { mode: 0o600, flag: 'wx' });
-      return { operationId: draft.id, expiresAt: draft.expiresAt, preview: { title, ...payload },
+      const serialized = JSON.stringify(draft);
+      if (Buffer.byteLength(serialized) > 190_000) throw new AppError('OPERATION_TOO_LARGE', 'Prepared content and image metadata exceed the local draft byte limit. Use fewer blocks/images.');
+      await writeFile(this.path(draft.id), serialized, { mode: 0o600, flag: 'wx' });
+      return { operationId: draft.id, expiresAt: draft.expiresAt, preview: { title, ...payload, ...(draft.images ? { images: draft.images } : {}) },
         approval: { command: process.execPath, args: [fileURLToPath(new URL('./cli.js', import.meta.url)), 'approve', draft.id, '--profile', this.config.profile],
           env: { BETTER_FEISHU_MCP_STATE_DIR: this.config.stateDir } },
         note: 'A human must review this exact preview in a trusted local terminal. The MCP cannot approve its own write.' };
@@ -85,13 +94,14 @@ export class Operations {
   async inspect(id: string) {
     const draft = await this.load(id); const session = await this.sessions.current();
     if (draft.owner !== owner(session)) throw new AppError('IDENTITY_MISMATCH', 'Operation belongs to another login.');
-    return { operationId: id, expiresAt: draft.expiresAt, title: draft.title, payload: draft.payload, approved: !!draft.signature };
+    return { operationId: id, expiresAt: draft.expiresAt, title: draft.title, payload: draft.payload, ...(draft.images ? { images: draft.images } : {}), approved: !!draft.signature };
   }
   // Called only by the interactive CLI after local human review; never registered as an MCP tool.
   async approve(id: string) {
     return withLock(this.config, 'op-' + operationId.parse(id), async () => {
       const draft = await this.load(id); const session = await this.sessions.current();
       if (draft.owner !== owner(session)) throw new AppError('IDENTITY_MISMATCH', 'Operation belongs to another login.');
+      if (draft.images) await loadImages(content(draft.payload), draft.images);
       await this.persist({ ...draft, signature: signature(draft, session) });
     });
   }
@@ -103,13 +113,14 @@ export class Operations {
       checkScopes(session, draft.payload);
       if (draft.owner !== owner(session)) throw new AppError('IDENTITY_MISMATCH', 'Operation belongs to another login.');
       if (!draft.signature || !same(draft.signature, signature(draft, session))) throw new AppError('APPROVAL_REQUIRED', 'Approve this exact operation in a trusted local terminal first.');
+      const { assets } = await loadImages(content(draft.payload), draft.images, signal);
       const consumed = this.path(id) + '.consumed';
       await rename(this.path(id), consumed); // Claim before any network call; cannot replay after a crash.
       const payload = draft.payload;
       try {
         const perform = async () => {
-          if (payload.type === 'create') return this.documents.create(payload.title, payload.folderId, payload.content, signal);
-          if (payload.type === 'update') return this.documents.update(payload.documentId, payload.revision, payload.change, signal);
+          if (payload.type === 'create') return this.documents.create(payload.title, payload.folderId, payload.content, signal, assets);
+          if (payload.type === 'update') return this.documents.update(payload.documentId, payload.revision, payload.change, signal, assets);
           return this.documents.delete(payload.documentId, payload.revision, signal);
         };
         const target = payload.type === 'create' ? `folder-${payload.folderId ?? 'root'}` : `doc-${payload.documentId}`;

@@ -52,3 +52,21 @@ it('downloads bounded resources, preserving real JSON files and sanitizing provi
   const denied = new FeishuHttp(async () => session(), fakeFetch(() => new Response('{"code":403,"msg":"private"}', { status: 403 })), 0);
   await expect(denied.download(path)).rejects.toMatchObject({ kind: 'FEISHU_ERROR', details: { httpStatus: 403 } });
 });
+it('serializes document-media uploads and never retries an ambiguous multipart POST', async () => {
+  let started!: () => void; const firstStarted = new Promise<void>(resolve => { started = resolve; });
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  let calls = 0; let inFlight = 0; let peak = 0;
+  const api = new FeishuHttp(async () => session({ scopes: ['docs:document.media:upload'] }), fakeFetch(async (_url, init) => {
+    calls++; inFlight++; peak = Math.max(peak, inFlight);
+    expect(init.body).toBeInstanceOf(FormData); expect(init.redirect).toBe('error');
+    if (calls === 1) { started(); await gate; }
+    inFlight--; return json({ file_token: 'mediaFixture' });
+  }), 0);
+  const first = api.uploadMedia(new FormData()); await firstStarted;
+  const second = api.uploadMedia(new FormData()); expect(calls).toBe(1);
+  release(); await Promise.all([first, second]); expect(peak).toBe(1); expect(calls).toBe(2);
+  let failures = 0;
+  const broken = new FeishuHttp(async () => session({ scopes: ['docs:document.media:upload'] }), fakeFetch(() => { failures++; throw new Error('private'); }), 0);
+  await expect(broken.uploadMedia(new FormData())).rejects.toMatchObject({ kind: 'NETWORK_ERROR' });
+  expect(failures).toBe(1);
+});
