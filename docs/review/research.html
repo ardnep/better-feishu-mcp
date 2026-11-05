@@ -1,0 +1,201 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Feishu MCP — Research and feasibility</title><style>
+:root{color-scheme:light;--bg:#f5f6f8;--fg:#202630;--paper:#fff;--line:#dce1e8;--link:#2059bc}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.7 system-ui,-apple-system,sans-serif}
+header{position:sticky;top:0;background:var(--paper);border-bottom:1px solid var(--line);padding:14px 4vw;z-index:1}nav{display:flex;gap:24px;align-items:center;flex-wrap:wrap}nav strong{margin-right:auto}a{color:var(--link);text-underline-offset:3px}
+main{max-width:1500px;margin:28px auto;padding:40px clamp(20px,4vw,64px);background:var(--paper);border:1px solid var(--line);border-radius:12px}
+h1{font-size:2.2rem;line-height:1.2}h2{margin-top:2.5em;border-bottom:1px solid var(--line);padding-bottom:.4em}h3{margin-top:2em}p,li{max-width:100ch}li{margin:.35em 0}code{font-size:.87em;background:var(--bg);padding:.15em .35em;border-radius:4px;overflow-wrap:anywhere}pre{overflow:auto;padding:20px;background:var(--bg)}table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.55;margin:24px 0}th,td{border:1px solid var(--line);padding:12px;vertical-align:top;text-align:left;min-width:140px}th{background:var(--bg)}.table-wrap{overflow:auto}details{background:var(--bg);padding:16px 24px;border-radius:8px}summary{cursor:pointer;font-weight:600}.note{font-size:13px;color:#687386}blockquote{border-left:4px solid var(--line);margin-left:0;padding-left:20px}
+@media print{header,details{display:none}main{border:0;margin:0;padding:0}body{background:white;color:black}a{color:inherit}table{font-size:10px}}
+</style></head><body><header><nav><strong>Feishu MCP · Review</strong><a href="plan.html">Implementation plan</a><a href="research.html">Research &amp; sources</a></nav></header><main><p class="note">Review-only HTML copy · Markdown remains the source of truth · Research dated November 4, 2026</p><details><summary>Contents</summary><div class="toc">
+<ul>
+<li><a href="#build-feishu-access-around-user-identity">Build Feishu Access Around User Identity</a><ul>
+<li><a href="#explicit-user-routes-justify-reads-without-promising-bot-free-success">Explicit user routes justify reads without promising bot-free success</a></li>
+<li><a href="#small-scope-bundles-unlock-breadth-without-erasing-approval-gates">Small scope bundles unlock breadth without erasing approval gates</a></li>
+<li><a href="#existing-official-tools-change-what-a-new-server-must-improve">Existing official tools change what a new server must improve</a></li>
+<li><a href="#transport-choice-and-confidential-oauth-define-separate-trust-boundaries">Transport choice and confidential OAuth define separate trust boundaries</a></li>
+<li><a href="#exit-gates-turn-documentary-feasibility-into-a-defensible-release">Exit gates turn documentary feasibility into a defensible release</a></li>
+<li><a href="#conclusion">Conclusion</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</details><h1 id="build-feishu-access-around-user-identity">Build Feishu Access Around User Identity</h1>
+<blockquote>
+<p><strong>Scope update after review:</strong> Feishu Docs CRUD (create, read, update and delete) is now a core requirement, not a deferred extra. This report established representative reads only; mutation endpoints, user-token scopes, content fidelity, concurrency and deletion/trash semantics still require focused verification. See the current plan for the required Docs delivery track.</p>
+<p><strong>Decision update after review:</strong> Build an independent TypeScript MCP using Feishu APIs directly. Do not reuse, fork, wrap or invoke existing Feishu MCP/CLI implementations. The comparison below is retained as research background; its recommendations to evaluate/reuse existing tools are superseded. The current implementation direction is in <a href="plan.html">the plan</a> and <a href="../review/plan.html">the short HTML brief</a>. Standard MCP, validation, testing and keychain libraries remain appropriate.</p>
+</blockquote>
+<p><strong>A local, user-only Feishu MCP is documentarily feasible and worth evaluating, with reads as the independent first deliverable and sending as a separately gated option.</strong> Creating an application and enabling bot capability is compatible with the requirement; adding its bot to group chats is not. Feishu documents user-token search, history, message retrieval, sending and replying, although generic bot-membership prerequisites conflict with the explicit user-token sections. The user's prior successful reads are relevant experience, not a test reproduced by this research. Personal OAuth consent does not remove app-scope activation, tenant policy, app availability or resource permissions, and neither approval-free access nor send availability can be guaranteed. Evaluate official tools before rebuilding: an improved open-source TypeScript server should differentiate through enforced user identity, minimal scopes, predictable read workflows and trustworthy write approval. This report and the accompanying plan authorize no implementation, credentials, app changes, live user-data calls, installation, remote deployment or publication.</p>
+<p>Research synthesis dated <strong>2026-11-04</strong>, based on the three research notes indexed in the README. There was no earlier research to build on. Feishu China is the verified documentary scope; Lark global requires a separate audit. Primary-source documentation and repository claims are distinguished below from engineering recommendations and untested behavior.</p>
+<h2 id="explicit-user-routes-justify-reads-without-promising-bot-free-success">Explicit user routes justify reads without promising bot-free success</h2>
+<p>Feishu's message APIs explicitly accept <code>user_access_token</code>; these are not equivalent to tenant/bot-token routes. Group discovery returns groups joined by the identity represented by the token and excludes direct-message conversations. The user's own group membership, app scopes and message visibility remain relevant. <strong>The project must never add the bot to a chat or fall back to tenant identity to make a failing user request work.</strong> App registration, bot-capability enablement and chat membership are three different actions. (<a href="https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/chat/list">Group listing</a>, <a href="https://open.feishu.cn/document/server-docs/application-scope/introduction?lang=zh-CN">Permission model</a>)</p>
+<p>The following scope matrix is a documentary starting point, not a console-verified permission manifest. Paths are relative to <code>https://open.feishu.cn/open-apis</code>. Alternatives joined by OR are alternatives, not a request to grant all of them; AND is essential for history and sending. Request scopes under <strong>user identity</strong>, not similarly named application/event permissions.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Endpoint</th>
+<th>Exact user scope logic</th>
+<th>Boundary and primary evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Joined group discovery</td>
+<td><code>GET /im/v1/chats</code></td>
+<td><code>im:chat:read</code> OR <code>im:chat.group_info:readonly</code> OR <code>im:chat:readonly</code> OR <code>im:chat</code></td>
+<td>Prefer <code>im:chat:read</code>; app bot capability required, but token identifies user or bot; excludes p2p. <a href="https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/chat/list">Reference</a></td>
+</tr>
+<tr>
+<td>Group members, optional</td>
+<td><code>GET /im/v1/chats/:chat_id/members</code></td>
+<td><code>im:chat.members:read</code> OR <code>im:chat</code> OR <code>im:chat:readonly</code> OR legacy <code>im:chat.group_info:readonly</code></td>
+<td>Calling user or bot must belong; same-tenant condition for internal groups. Returned list excludes bots, so it cannot prove bot absence. <a href="https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/chat-members/get">Reference</a></td>
+</tr>
+<tr>
+<td>Group history / message get</td>
+<td><code>GET /im/v1/messages</code>; <code>GET /im/v1/messages/:message_id</code></td>
+<td>(<code>im:message:readonly</code> OR <code>im:message</code>) AND <code>im:message.group_msg:get_as_user</code></td>
+<td>User token supported explicitly; generic bot-in-group prerequisite remains ambiguous. <a href="https://open.feishu.cn/document/server-docs/im-v1/message/list">History</a>, <a href="https://open.feishu.cn/document/server-docs/im-v1/message/get">Get</a></td>
+</tr>
+<tr>
+<td>P2p history / message get</td>
+<td>Same endpoints</td>
+<td>(<code>im:message:readonly</code> OR <code>im:message</code>) AND <code>im:message.p2p_msg:get_as_user</code></td>
+<td>Separate chat-type scope, not covered by group permission. <a href="https://open.feishu.cn/document/server-docs/im-v1/message/list">History</a></td>
+</tr>
+<tr>
+<td>Message search, preferred</td>
+<td><code>POST /im/v1/messages/search</code></td>
+<td><code>search:message</code></td>
+<td>User token only; snippets/metadata, not guaranteed full bodies. <a href="https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/search">Reference</a></td>
+</tr>
+<tr>
+<td>Message search, older</td>
+<td><code>POST /search/v2/message</code></td>
+<td><code>search:message</code></td>
+<td>User token only; IDs, with migration to IM search recommended. <a href="https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/search-v2/message/create">Reference</a></td>
+</tr>
+<tr>
+<td>Send / reply as self</td>
+<td><code>POST /im/v1/messages</code>; <code>POST /im/v1/messages/:message_id/reply</code></td>
+<td><code>im:message</code> AND <strong><code>im:message.send_as_user</code></strong></td>
+<td>Dot before <code>send_as_user</code>; tenant availability and no-bot behavior require separate validation. <a href="https://open.feishu.cn/document/server-docs/im-v1/message/create">Send</a>, <a href="https://open.feishu.cn/document/server-docs/im-v1/message/reply">Reply</a></td>
+</tr>
+<tr>
+<td>Add reaction</td>
+<td><code>POST /im/v1/messages/:message_id/reactions</code></td>
+<td><code>im:message.reactions:write_only</code> OR <code>im:message</code></td>
+<td>User token supported; user or bot must be in conversation; separately approved write. <a href="https://open.feishu.cn/document/server-docs/im-v1/message-reaction/create">Reference</a></td>
+</tr>
+<tr>
+<td>Recall</td>
+<td><code>DELETE /im/v1/messages/:message_id</code></td>
+<td>Reference lists OR <code>im:message</code>, <code>im:message:recall</code>, <code>im:message:send_as_bot</code>; exact user-eligible selection remains to verify</td>
+<td>User token is listed, but scope identity, ownership/role and time-window rules need testing. Not deletion only from the user's view. <a href="https://open.feishu.cn/document/server-docs/im-v1/message/delete">Reference</a></td>
+</tr>
+</tbody>
+</table></div>
+<p>Search-only access is a useful smallest messaging milestone: <code>search:message</code> can supply snippets and chat/message identifiers without requesting body hydration. It is not an exhaustive DM directory or archive. History defaults to 20 messages, at most 50 per page; ordinary chat history returns thread roots, so replies require thread-container reads. Visibility restrictions include older-history settings, restricted chat types and invisible/deleted messages. The history error catalog also identifies apps with external sharing or associated organizations enabled as incompatible with user-history requests. Do not translate every failure into “admin approval required.” (<a href="https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/search">Search</a>, <a href="https://open.feishu.cn/document/server-docs/im-v1/message/list">History</a>, <a href="https://open.feishu.cn/document/server-docs/im-v1/message/get">Get</a>)</p>
+<p><strong>Generic bot-membership wording remains unresolved, not disproved.</strong> History/get and send/reply references retain bot-in-group prerequisites while explicitly documenting user-token permissions. Feishu's official plugin guide separately advertises user-identity reads and writes, supporting the interpretation that a genuine user route exists, but not proving that every third-party app can use it without bot membership in the target tenant. The deciding experiment is a consenting user's existing ordinary group, with bot absence verified independently before and after each operation. Failure must preserve the no-bot constraint rather than trigger a membership workaround. (<a href="https://open.feishu.cn/document/server-docs/im-v1/message/list">History</a>, <a href="https://open.feishu.cn/document/server-docs/im-v1/message/create">Send</a>, <a href="https://www.feishu.cn/content/article/7613711414611463386">Official plugin guide</a>)</p>
+<p>Sending is credible but optional: the official guide expressly warns that some enterprises, including ByteDance, do not support user-identity sending. There is no established universal process that guarantees newly obtaining <code>im:message.send_as_user</code>. Message editing documents only tenant-token support; message-file upload and resource download also document tenant tokens, with download including an app-in-chat restriction. Although the official plugin advertises user attachments, its exact public route or entitlement is unresolved. <strong>User editing and no-bot attachment downloads must not be advertised as supported</strong>, and cookies/private APIs are not an acceptable bridge. (<a href="https://www.feishu.cn/content/article/7613711414611463386">Official guide</a>, <a href="https://open.feishu.cn/document/server-docs/im-v1/message/update">Edit</a>, <a href="https://open.feishu.cn/document/server-docs/im-v1/file/create">Upload</a>, <a href="https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message-resource/get">Download</a>)</p>
+<h2 id="small-scope-bundles-unlock-breadth-without-erasing-approval-gates">Small scope bundles unlock breadth without erasing approval gates</h2>
+<p>Feishu's user-token surface extends far beyond chat. The representative endpoints below accept user tokens, but that does not make every API in their product family available to the user or review-free. Start with narrow read packs and preserve separate discovery, content, export and write capabilities. Prefer read-only alternatives over broad write scopes; a scope alone never proves resource access. (<a href="https://open.feishu.cn/document/server-docs/application-scope/introduction?lang=zh-CN">Permission model</a>)</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Read capability</th>
+<th>Representative endpoint</th>
+<th>Least-privilege representative scope</th>
+<th>Important restriction / primary source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Documents/Wiki search</td>
+<td><code>POST /search/v2/doc_wiki/search</code></td>
+<td><code>search:docs:read</code></td>
+<td>Requires document or Wiki filter; header allows U/T despite user-oriented description; validate U result coverage. <a href="https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/search-v2/doc_wiki/search?lang=zh-CN">API</a></td>
+</tr>
+<tr>
+<td>Docx text</td>
+<td><code>GET /docx/v1/documents/:id/raw_content</code></td>
+<td><code>docx:document:readonly</code></td>
+<td>Actual document reading rights; not full-fidelity extraction of every embedded block. <a href="https://open.feishu.cn/document/server-docs/docs/docs/docx-v1/document/raw_content?lang=zh-CN">API</a></td>
+</tr>
+<tr>
+<td>Drive folder listing</td>
+<td><code>GET /drive/v1/files</code></td>
+<td><code>space:document:retrieve</code> OR <code>drive:drive:readonly</code></td>
+<td>One folder level; root behavior differs; not every accessible document. <a href="https://open.feishu.cn/document/server-docs/docs/drive-v1/folder/list?lang=zh-CN">API</a></td>
+</tr>
+<tr>
+<td>Wiki resolution</td>
+<td><code>GET /wiki/v2/spaces/get_node</code></td>
+<td><code>wiki:node:read</code> OR <code>wiki:wiki:readonly</code></td>
+<td>Resolves object type/token; downstream content needs its own scopes. <a href="https://open.feishu.cn/document/ukTMukTMukTM/uUDN04SN0QjL1QDN/wiki-v2/space/get_node">API</a></td>
+</tr>
+<tr>
+<td>Base records</td>
+<td><code>POST /bitable/v1/apps/:app/tables/:table/records/search</code></td>
+<td><code>base:record:retrieve</code> OR <code>bitable:app:readonly</code></td>
+<td>Advanced permissions can require management rights; empty success need not mean no records. <a href="https://open.feishu.cn/document/docs/bitable-v1/app-table-record/search?lang=zh-CN">API</a></td>
+</tr>
+<tr>
+<td>Sheets ranges</td>
+<td><code>GET /sheets/v2/spreadsheets/:token/values/:range</code></td>
+<td><code>sheets:spreadsheet:readonly</code></td>
+<td>Resource read rights; response and formula limitations. <a href="https://open.feishu.cn/document/server-docs/docs/sheets-v3/data-operation/reading-a-single-range">API</a></td>
+</tr>
+<tr>
+<td>Calendar events</td>
+<td><code>GET /calendar/v4/calendars/:id/events</code></td>
+<td><code>calendar:calendar.event:read</code> OR <code>calendar:calendar:readonly</code></td>
+<td>Calendar role required; Google/Exchange excluded; time-window pagination limitations. Bot-capability errors do not mean joining chats. <a href="https://open.feishu.cn/document/server-docs/calendar-v4/calendar-event/list">API</a></td>
+</tr>
+<tr>
+<td>Personal tasks</td>
+<td><code>GET /task/v2/tasks</code></td>
+<td><code>task:task:read</code></td>
+<td>U-only; assigned-to-me tasks, not every UI view. <a href="https://open.feishu.cn/document/task-v2/task/list?lang=zh-CN">API</a></td>
+</tr>
+<tr>
+<td>Contacts</td>
+<td><code>GET /contact/v3/users/:id</code></td>
+<td><code>contact:contact.base:readonly</code>; name/avatar field permission <code>contact:user.base:readonly</code> separately</td>
+<td>Organizational visibility and field-specific scopes; prefer app-specific <code>open_id</code> over employee IDs. <a href="https://open.feishu.cn/document/server-docs/contact-v3/user/get">API</a></td>
+</tr>
+<tr>
+<td>Minutes transcript export</td>
+<td><code>GET /minutes/v1/minutes/:token/transcript</code></td>
+<td><code>minutes:minutes.transcript:export</code></td>
+<td>Actual export permission required; viewing is not enough. <a href="https://open.feishu.cn/document/minutes-v1/minute-transcript/get">API</a></td>
+</tr>
+<tr>
+<td>Mail message</td>
+<td><code>GET /mail/v1/user_mailboxes/:id/messages/:id</code></td>
+<td><code>mail:user_mailbox.message:readonly</code>, with <code>.body:read</code>, <code>.subject:read</code>, <code>.address:read</code> variants under <code>mail:user_mailbox.message</code> as needed</td>
+<td>Custom apps only; actual mailbox access and separate sensitive field grants. <a href="https://open.feishu.cn/document/mail-v1/user_mailbox-message/get?lang=zh-CN">API</a></td>
+</tr>
+</tbody>
+</table></div>
+<p>Document editing, Base/Sheets writes, calendar scheduling, task changes, comments, imports/exports, file transfer, subscriptions, approvals, attendance/HR and meeting recordings belong in a broader discovery backlog, not a validated user-token feature promise. Each needs an endpoint-level audit of identity support, exact scopes, resource constraints and tenant availability before admission. The present evidence establishes representative read feasibility, not complete platform parity or a universal free-plan entitlement.</p>
+<p><strong>Personal consent is one gate, not the whole authorization system.</strong> Effective access combines app scope activation, actual user grants, app availability/installation, resource ACLs and tenant policy. Feishu explicitly permits developer user-token debugging without publication/review for eligible scopes, while excluding some sensitive scopes. This is a plausible explanation for the user's previous approval-free reads, not a diagnosis of their setup or proof of indefinite production exemption. Test enterprises offer a separate development route; their permissions do not automatically apply to production resources. (<a href="https://open.feishu.cn/document/server-docs/application-scope/introduction?lang=zh-CN">Permissions and debugging</a>, <a href="https://open.feishu.cn/document/sso/web-application-end-user-consent/guide">User consent</a>)</p>
+<p>The minimal-friction order is to inspect an existing authorized app, investigate eligible developer debugging for the smallest next bundle, then use tenant-defined review-free scopes or normal custom-app release when necessary. Review-free scope activation and automatic approval can reflect prior administrator policy rather than absence of governance. Marketplace employee self-install is conditional on developer and tenant settings, activates only exempt permissions, and installs for the enterprise rather than only that employee. Publishing this project as a marketplace app introduces a separate ISV/review obligation; an open-source license grants no Feishu permission. <strong>No approval guarantees can be made without the target console and policy.</strong> (<a href="https://open.feishu.cn/document/best-practices/intro-to-custom-app-review">Custom-app review</a>, <a href="https://open.feishu.cn/document/uAjLw4CM/uYjL24iN/platform-overveiw/develop-process/configuring-employee-review-free-installation">Employee self-install</a>, <a href="https://open.feishu.cn/document/isv-guides/publish-your-app/step7-publish-the-store-application?lang=zh-CN">Marketplace publication</a>)</p>
+<h2 id="existing-official-tools-change-what-a-new-server-must-improve">Existing official tools change what a new server must improve</h2>
+<p>The official MIT-licensed <code>larksuite/lark-openapi-mcp</code> already supports OAuth, scope selection and explicit <code>user_access_token</code> mode; its README warns that <code>auto</code> can fall back to tenant tokens. Therefore “Feishu MCP cannot act as the user” is not a valid rationale for rebuilding. Its documented limitations include file upload/download and direct document editing, with non-preset API compatibility untested; its OAuth HTTP deployment documentation describes localhost-only use rather than safe shared hosting. Evaluate a pinned version with strict user mode and a tool allowlist before selecting a new implementation. (<a href="https://github.com/larksuite/lark-openapi-mcp">Official MCP</a>, <a href="https://github.com/larksuite/lark-openapi-mcp/blob/main/docs/usage/configuration/configuration.md">Configuration</a>, <a href="https://github.com/larksuite/lark-openapi-mcp/blob/main/LICENSE">License</a>)</p>
+<p>The official MIT-licensed Go-based Lark CLI is another concrete baseline: it documents user/bot identity selection, OAuth, native keychain storage, history/search/send/reply, document/media workflows and schema inspection. A constrained TypeScript MCP facade could reuse it, but must pin its executable/version/output contract, use fixed argument arrays rather than a shell, and prevent bot identity and generic API escape hatches. Direct API adapters avoid subprocess/output dependencies; adapting the official MCP avoids rebuilding OAuth. These are alternatives to measure, not a predetermined rewrite. The official CLI's warning against adding assistant bots to groups aligns particularly well with this project's invariant. (<a href="https://github.com/larksuite/cli">Official CLI</a>)</p>
+<p>Community <code>open-feishu-mcp-server</code> illustrates Workers-based remote hosting and the dual OAuth roles of MCP provider and Feishu client, but its documented <code>/sse</code> setup and broad authenticated-tool access are not the recommended transport/security baseline. AWS's AgentCore sample wraps the official CLI with per-user credential infrastructure but adds substantial hosting dependencies. These repositories provide implementation ideas, not independently audited security or comparative performance evidence. Pin commits and inspect code, licenses and notices before reuse; preserve upstream notices for derivative code. (<a href="https://github.com/ztxtxwd/open-feishu-mcp-server/blob/main/README.en.md">Community project</a>, <a href="https://github.com/aws-samples/sample-lark-mcp-on-agentcore">AWS sample</a>)</p>
+<p>The proposed project's defensible improvement is <strong>a small, auditable capability boundary</strong>, not more generated endpoints: no identity fallback, clear permission diagnostics, bounded results with provenance, independent snippet/body/export packs, deterministic failure for unsupported user routes, and trusted preview/approval for writes. TypeScript fits an HTTP/schema-heavy npm-distributed server and shared local/hosted service layer; Go offers native packaging and reuse of the CLI, Python suits Python-owning teams, and Rust trades higher initial complexity for native control. This is engineering judgment, not a benchmark conclusion.</p>
+<h2 id="transport-choice-and-confidential-oauth-define-separate-trust-boundaries">Transport choice and confidential OAuth define separate trust boundaries</h2>
+<p>Start with a local TypeScript process over <strong>stdio</strong>, not a public service. Locality describes where a process runs; transport describes how MCP messages travel. Streamable HTTP can be local or hosted, while stdio is normally a client-launched subprocess. A local process still runs with the user's OS privileges and is not a sandbox; retrieved private content still reaches the configured MCP client/model. The currently served MCP specification describes newline-delimited stdio and HTTP POST messages with JSON or request-scoped SSE replies. Its 2026-07-28 model differs from older initialization/session-based examples; select clients and test compatibility rather than copying an old <code>/sse</code> tutorial. (<a href="https://modelcontextprotocol.io/specification/latest/basic/transports">Transports</a>, <a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http">HTTP binding</a>, <a href="https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices">Security guidance</a>)</p>
+<p><strong>The SDK v2 stable claim was independently rechecked during synthesis.</strong> The retrieved upstream main README explicitly identifies split <code>@modelcontextprotocol/server</code> and <code>@modelcontextprotocol/client</code> packages as the stable v2 line implementing MCP 2026-07-28; npm's mutable <code>server/latest</code> record returned <strong>2.4.0</strong>, with Node <code>&gt;=20</code>. These are source/registry observations on the research date, not an installation, provenance-signature verification or target-client compatibility test. Prefer the stable line indicated by verified sources, but pin the exact reviewed and tested release/runtime later; if source freshness or compatibility becomes uncertain, defer version selection rather than asserting stability from this report alone. Do not mix v1 examples with v2 imports or treat a minimum engine version as a supported-LTS policy. (<a href="https://raw.githubusercontent.com/modelcontextprotocol/typescript-sdk/main/README.md">Upstream README</a>, <a href="https://registry.npmjs.org/@modelcontextprotocol/server/latest">Registry record</a>)</p>
+<p>Figma demonstrates why “MCP means a local npm process” is outdated. Its public remote offering uses <code>https://mcp.figma.com/mcp</code>, while the desktop app exposes local HTTP at <code>http://127.0.0.1:3845/mcp</code>; feature/entitlement and selection-context differences accompany these deployments. This is a delivery comparison, <strong>not evidence that the Figma tools injected into this research environment are the same public product</strong>, endpoint, auth flow or feature set. Feishu does not need to copy Figma's hosting model to support modern MCP. (<a href="https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/">Figma remote setup</a>, <a href="https://developers.figma.com/docs/figma-mcp-server/local-server-installation/">Figma desktop setup</a>)</p>
+<p>Upstream Feishu authorization is separate from MCP transport authorization. The current Feishu token reference specifies <code>https://accounts.feishu.cn/oauth/v3/token</code>, documents PKCE, and says Open Platform-created apps are <strong>confidential clients requiring <code>client_secret</code></strong>. Public-client registration is not open; the documented exception is official Feishu MCP apps. PKCE does not turn an arbitrary third-party distributed app into a secretless public client. Older authorization guidance and v2 wording conflict, so test the v3 S256 exchange and refresh contract before release. (<a href="https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/access-token/get-user-access-token-v3">OAuth v3</a>, <a href="https://open.feishu.cn/document/authentication-management/access-token/obtain-oauth-code?lang=zh-CN">Authorization-code guide</a>, <a href="https://open.feishu.cn/document/authentication-management/access-token/get-user-access-token">v2 migration notice</a>)</p>
+<p>For local OSS distribution, recommend <strong>bring-your-own app credentials</strong>, stored locally in a keychain, never a shared secret shipped in source/npm/config examples. A centrally owned confidential app instead needs a trusted backend to hold its secret, changing the custody and operations model. Use an exactly registered loopback callback with state, S256, replay rejection and a short-lived listener; dynamic ports and <code>localhost</code>/<code>127.0.0.1</code> interchangeability remain unverified. Inspect actual returned scopes, request <code>offline_access</code> only when persistent login is wanted, honor returned expiry and serialize atomic refresh-token rotation because v3 documents single-use refresh tokens. Logout's local deletion and provider-side revocation are different operations. (<a href="https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/access-token/get-user-access-token-v3">OAuth v3</a>, <a href="https://github.com/larksuite/lark-openapi-mcp">Official localhost callback example</a>)</p>
+<p>If hosting is later justified, add a separate Streamable HTTP adapter with HTTPS, audience-bound MCP authorization, explicit client consent, per-user isolation, encrypted upstream credentials, resource metadata/discovery, origin validation and retention controls. A Feishu token must not double as an MCP bearer token; validating one does not authorize the other trust boundary. Current MCP guidance offers multiple client-registration strategies rather than requiring dynamic registration. Never broadcast the official MCP's localhost OAuth mode as a shortcut to safe multitenancy. (<a href="https://modelcontextprotocol.io/specification/latest/basic/authorization">MCP authorization</a>, <a href="https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices">Security guidance</a>, <a href="https://github.com/larksuite/lark-openapi-mcp/blob/main/docs/usage/configuration/configuration.md">Official deployment limits</a>)</p>
+<h2 id="exit-gates-turn-documentary-feasibility-into-a-defensible-release">Exit gates turn documentary feasibility into a defensible release</h2>
+<p>The architecture should separate domain services, region-fixed Feishu adapters, OAuth/token custody, capability policy, curated tools and transport adapters. Effective access is the intersection of enabled tools, supported user identity, actual scopes, resource rights, local policy and operation approval. Check it at invocation as well as discovery. Default writes, sharing, deletion, exports and bulk indexing off; avoid generic HTTP/shell tools, arbitrary authenticated URLs and token-returning tools. Use bounded pagination/bytes/time, cancellation, provider-aware backoff and content-free redacted diagnostics. Treat messages/documents as untrusted data, never as instructions to change identity, acquire scopes or send information. (<a href="https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices">MCP security guidance</a>, <a href="https://github.com/larksuite/cli">CLI safety precedent</a>)</p>
+<p>The first live gate, only after separate authorization, records exact endpoint/token identity, actual scopes, app release/visibility, tenant context and results for search, joined-group discovery, no-bot group history/get, p2p history and thread replies. Verify bot absence using an independent trusted UI/admin view: the members endpoint excludes bots and cannot establish it. Sending receives a separate scope/tenant gate and a separately approved message to a named recipient; failed sending must not block read-only release. Unsupported editing/resources remain disabled. A successful controlled test establishes only that tested tenant/app/resource combination, not universal compatibility. (<a href="https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/chat-members/get">Member listing</a>, <a href="https://open.feishu.cn/document/server-docs/im-v1/message/list">History</a>, <a href="https://open.feishu.cn/document/server-docs/im-v1/message/create">Send</a>)</p>
+<p>A later implementation must test schema and scope logic, redaction, refresh races/crash recovery, callback state/PKCE failures, identity switching, hostile content, SSRF, cursor isolation, capped pagination and stdio cleanliness against selected clients. Writes need trusted approval bound to user, destination and payload, expiration and replay protection; a model-provided <code>confirm: true</code> is not human consent. Avoid retrying ambiguous sends without endpoint-supported deduplication or reconciliation. Before OSS publication, inspect the packed artifact, pin dependencies, retain third-party notices, scan secrets/dependencies, document supported Node/client versions and define incident/upgrade behavior. These are proposed acceptance criteria, not controls implemented by this research-only repository.</p>
+<h2 id="conclusion">Conclusion</h2>
+<p>The critical product boundary is not “bot versus no application”; it is <strong>delegated user access without chat-bot membership</strong>, enforced independently of API convenience. The most useful next evidence is a small, recorded no-bot read experiment under the user's actual app and tenant policy, compared with official tools—not a larger generated tool catalog or a premature hosted deployment.</p>
+<p>A narrow read-only release can remain valuable even if user sending, attachments or approval-free production use prove unavailable. Treat those outcomes as capability limits with actionable diagnostics, not reasons to weaken identity, tenant governance or the user's no-bot constraint. The accompanying plan makes these limits explicit before any credentials or implementation exist.</p></main></body></html>
