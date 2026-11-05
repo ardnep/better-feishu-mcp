@@ -37,3 +37,18 @@ it('caps streamed bytes and rejects invalid JSON', async () => {
   await expect(boundedJson(new Response('x'.repeat(100)), 50)).rejects.toMatchObject({ kind: 'RESPONSE_TOO_LARGE' });
   await expect(boundedJson(new Response('not-json'))).rejects.toMatchObject({ kind: 'INVALID_RESPONSE' });
 });
+it('downloads bounded resources, preserving real JSON files and sanitizing provider errors', async () => {
+  const path = '/im/v1/messages/om_fixture/resources/file_fixture?type=file';
+  const file = new FeishuHttp(async () => session(), fakeFetch(() => new Response('{"code":123}', {
+    headers: { 'content-type': 'application/json', 'content-disposition': 'attachment; filename="data.json"' },
+  })), 0);
+  expect((await file.download(path)).toString()).toBe('{"code":123}');
+  const error = new FeishuHttp(async () => session(), fakeFetch(() => new Response('{"code":123,"msg":"private"}', {
+    headers: { 'content-type': 'application/json' },
+  })), 0);
+  await expect(error.download(path)).rejects.toMatchObject({ kind: 'FEISHU_ERROR', details: { code: 123 } });
+  const oversized = new FeishuHttp(async () => session(), fakeFetch(() => new Response(new Uint8Array(5_000_001))), 0);
+  await expect(oversized.download(path)).rejects.toMatchObject({ kind: 'RESPONSE_TOO_LARGE' });
+  const denied = new FeishuHttp(async () => session(), fakeFetch(() => new Response('{"code":403,"msg":"private"}', { status: 403 })), 0);
+  await expect(denied.download(path)).rejects.toMatchObject({ kind: 'FEISHU_ERROR', details: { httpStatus: 403 } });
+});

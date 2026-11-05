@@ -4,9 +4,9 @@ import { AppError, requireScopes } from './core.js';
 import type { Session } from './credentials.js';
 
 export type Fetch = typeof globalThis.fetch;
-export async function boundedJson(response: Response, maximum = 2_000_000): Promise<unknown> {
+export async function boundedBytes(response: Response, maximum = 2_000_000): Promise<Buffer> {
   const reader = response.body?.getReader();
-  if (!reader) throw new AppError('INVALID_RESPONSE', 'Provider returned no JSON body.');
+  if (!reader) throw new AppError('INVALID_RESPONSE', 'Provider returned no body.');
   const chunks: Uint8Array[] = []; let size = 0;
   try {
     for (;;) {
@@ -15,13 +15,19 @@ export async function boundedJson(response: Response, maximum = 2_000_000): Prom
       if (size > maximum) throw new AppError('RESPONSE_TOO_LARGE', 'Provider response exceeded the byte limit. Request a smaller page.');
       chunks.push(value);
     }
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+    return Buffer.concat(chunks);
   } catch (error) {
     await reader.cancel().catch(() => {});
     if (error instanceof AppError) throw error;
-    throw new AppError('INVALID_RESPONSE', 'Provider returned invalid or interrupted JSON.');
+    throw new AppError('INVALID_RESPONSE', 'Provider returned an interrupted body.');
   } finally { reader.releaseLock(); }
 }
+export async function boundedJson(response: Response, maximum = 2_000_000): Promise<unknown> {
+  const bytes = await boundedBytes(response, maximum);
+  try { return JSON.parse(bytes.toString('utf8')) as unknown; }
+  catch { throw new AppError('INVALID_RESPONSE', 'Provider returned invalid JSON.'); }
+}
+type RequestOptions = { body?: unknown; scopes?: readonly (string | readonly string[])[]; signal?: AbortSignal; safeRead?: boolean };
 const envelope = z.object({ code: z.number(), data: z.unknown().optional(), error: z.object({
   log_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(),
   permission_violations: z.array(z.object({ subject: z.string().regex(/^[a-z0-9_.:-]+$/), type: z.string() })).optional(),
@@ -32,7 +38,14 @@ export class FeishuHttp {
   constructor(private readonly getSession: () => Promise<Session>, private readonly fetcher: Fetch = fetch,
     private readonly spacingMs = 400) {}
   async request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, schema: z.ZodType<T>,
-    options: { body?: unknown; scopes?: readonly (string | readonly string[])[]; signal?: AbortSignal; safeRead?: boolean } = {}): Promise<T> {
+    options: RequestOptions = {}): Promise<T> {
+    return schema.parse(await this.perform(method, path, options));
+  }
+  async download(path: string, options: RequestOptions = {}): Promise<Buffer> {
+    return z.instanceof(Buffer).parse(await this.perform('GET', path, options, true));
+  }
+  private async perform(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string,
+    options: RequestOptions, binary = false): Promise<unknown> {
     if (!path.startsWith('/') || path.startsWith('//') || /[\r\n\\]/.test(path)) throw new AppError('INVALID_ENDPOINT', 'Only fixed Feishu API paths are permitted.');
     const url = new URL('https://open.feishu.cn/open-apis' + path);
     if (url.origin !== 'https://open.feishu.cn' || !url.pathname.startsWith('/open-apis/')) throw new AppError('INVALID_ENDPOINT', 'Invalid API origin.');
@@ -56,7 +69,18 @@ export class FeishuHttp {
         throw new AppError(signal.aborted ? 'CANCELLED' : 'NETWORK_ERROR', method === 'GET' || options.safeRead
           ? 'Read request failed or was cancelled.' : 'Write outcome may be unknown. Inspect the target before retrying.');
       }
-      const parsed = envelope.safeParse(await boundedJson(response));
+      let payload: unknown;
+      if (binary && response.ok) {
+        const bytes = await boundedBytes(response, 5_000_000);
+        // Feishu may report API errors as HTTP 200 JSON. A download disposition
+        // distinguishes actual JSON attachments from these error envelopes.
+        if (!response.headers.has('content-disposition') && response.headers.get('content-type')?.includes('application/json')) {
+          try { payload = JSON.parse(bytes.toString('utf8')); } catch { /* not an API error */ }
+          const error = envelope.safeParse(payload);
+          if (!error.success || error.data.code === 0) return bytes;
+        } else return bytes;
+      } else payload = await boundedJson(response);
+      const parsed = envelope.safeParse(payload);
       if (!parsed.success) throw new AppError('INVALID_RESPONSE', 'Provider response did not contain a valid API envelope.');
       const body = parsed.data;
       const retryable = response.status === 429 || response.status >= 500 || body.code === 99991400;
@@ -71,7 +95,7 @@ export class FeishuHttp {
           { code: body.code, httpStatus: response.status, ...(body.error?.log_id ? { requestId: body.error.log_id } : {}),
             ...(body.error?.permission_violations ? { requiredScopes: body.error.permission_violations.map(v => v.subject) } : {}) });
       }
-      return schema.parse(body.data);
+      return body.data;
     }
     throw new AppError('RATE_OR_PROVIDER_ERROR', 'Retry budget exhausted.');
   }
