@@ -58,10 +58,10 @@ try {
   await client.connect(transport);
   const tools = (await client.listTools()).tools.map(t => t.name);
   assert.ok(tools.includes('messages_search') && tools.includes('documents_read'));
-  assert.ok(['sheets_get', 'sheets_list', 'sheets_read'].every(name => tools.includes(name)));
+  assert.ok(['sheets_get', 'sheets_list', 'sheets_read', 'boards_get_nodes'].every(name => tools.includes(name)));
   assert.ok(!tools.some(t => /send|documents_search|operations_approve/.test(t)));
   assert.equal(tools.includes('operations_commit'), crud); checks.push('stdio_discovery_and_tool_policy');
-  for (const name of ['documents_create', 'documents_update', 'documents_delete']) assert.equal(tools.includes(name), crud);
+  for (const name of ['documents_create', 'documents_update', 'documents_delete', 'documents_add_board']) assert.equal(tools.includes(name), crud);
   const status = await call('auth_status'); assert.equal(status.loggedIn, live);
   assert.ok(!('accessToken' in status) && !('appSecret' in status)); checks.push('token_free_status');
   if (!live) {
