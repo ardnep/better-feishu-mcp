@@ -4,6 +4,7 @@ This local alpha is not an independent security audit or an OS sandbox.
 
 ## Identity and credentials
 
+- Additional user scopes require explicit repeated `login --scope` flags, shown on the local form and passed through Feishu consent. They do not change defaults, enable tenant-token access, bypass app review/resource controls or create new tools. Missing explicitly requested extra grants fail before replacing local credentials. The recorded productivity pack's review-free classification applies only to the console checked on its review date; it must not be assumed for another tenant.
 - Feishu China only, fixed provider/API hosts and redirect refusal. No generic authenticated HTTP tool, bot-token acquisition, bot joining or identity fallback.
 - User/app/tenant binding is established through the user-info API, saved in the OS keychain and checked on refresh. Running MCP processes accept a renewed login for the same app/user/tenant automatically; switching identity still requires restarting. A new login ID still invalidates previously approved legacy drafts. Use the same profile/state directory across processes for shared credential locking.
 - App secrets, access/refresh tokens and approval signing keys are never deliberately written to source, configuration, logs or test reports. OS-keychain failure stops credential operations; no plaintext fallback. OS memory/core dumps and the user's browser/password manager remain outside this guarantee.

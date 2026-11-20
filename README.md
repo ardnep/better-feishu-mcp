@@ -59,6 +59,19 @@ Login requests **persistent renewal by default**: enable the user scope `offline
 
 Multiple MCP processes/sessions using the same profile and state directory share the OS-keychain login. Re-login to the **same app/user/tenant** is picked up automatically on their next API call; it does not require restarting or logging in separately in every session. Explicitly switching identity still requires restarting bound MCP processes. Re-login invalidates previously approved legacy drafts. `LOGIN_REQUIRED` due to expiry without a refresh token is different from `RESTART_REQUIRED` due to an identity switch. Existing temporary logins need one reauthorization to obtain refresh credentials. `status` distinguishes stored credentials (`loggedIn`) from `loginRequired` and `refreshUsable`; it reports refresh expiry without exposing tokens. Use the same state directory across processes so credential refresh shares one lock.
 
+### Explicit extra user permissions
+
+Repeat `--scope` to request a reviewed set of additional user scopes without changing the default login bundle:
+
+```sh
+BETTER_FEISHU_MCP_BROWSER=Zen node dist/cli.js login --document-images --document-boards \
+  --scope sheets:spreadsheet:create --scope sheets:spreadsheet:write_only
+```
+
+The local form lists the complete requested scope set before consent. Extra scopes are bounded, validated and deduplicated; if Feishu omits an explicitly requested extra grant, login fails without replacing the previous local credential record. App enablement/review and employee OAuth consent are separate: `--scope` does not bypass either, and **a grant does not implement a new MCP tool**. Preserve extra `--scope` arguments on subsequent explicit reauthorizations; routine refresh reuses the returned grant set.
+
+The optional [productivity permission pack](docs/permission-packs/productivity-user-scopes.json) records 62 extra scopes: 59 newly added review-free user grants plus three previously enabled board/media grants. This classification was checked in the authorized app console on 2026-11-20 and is **not a universal Feishu approval exemption**. The pack includes user-scoped content changes, deletion and broad calendar management, but excludes document-sharing administration, tenant-token grants, HR/attendance/organization administration, and user-send/document-search grants absent from the review-free results. Nothing loads the pack automatically. Many corresponding APIs/tools still need implementation and live validation.
+
 ## Connect an MCP client
 
 Use the client's local **stdio** integration. Replace the path below with the actual built repository path; use an absolute Node executable path if your client cannot find Node 24.

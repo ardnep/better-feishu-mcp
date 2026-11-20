@@ -1,4 +1,5 @@
 import { it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { authorize, CALLBACK, equal, login, refreshSession } from '../src/oauth.js';
 import { BASE_SCOPES } from '../src/core.js';
 import { BOARD_SCOPES } from '../src/boards.js';
@@ -26,12 +27,32 @@ it('requests board create/read scopes only through explicit opt-in', () => {
   expect(flow.scopes).toEqual([...BASE_SCOPES, 'docs:document.media:upload', ...BOARD_SCOPES]);
   expect(new URL(flow.url).searchParams.get('scope')?.split(' ')).toEqual(flow.scopes);
 });
-it.each(['temporary', 'persistent', 'missing-token', 'missing-expiry', 'missing-scope'] as const)('runs a protected %s login callback without silently losing persistent login', async variant => {
-  const offline = variant !== 'temporary'; const rejected = !['temporary', 'persistent'].includes(variant);
+it('requests bounded explicit extra scopes without changing defaults or duplicating existing grants', () => {
+  const extras = ['sheets:spreadsheet:create', 'base:record:read'];
+  const flow = authorize('cli_synthetic', 'confidential', true, true, true, [...extras, BASE_SCOPES[0], BOARD_SCOPES[0]]);
+  expect(flow.scopes).toEqual([...BASE_SCOPES, 'offline_access', 'docs:document.media:upload', ...BOARD_SCOPES, ...extras]);
+  expect(new URL(flow.url).searchParams.get('scope')?.split(' ')).toEqual(flow.scopes);
+  for (const scope of extras) expect(authorize('cli_synthetic').scopes).not.toContain(scope);
+  for (const scopes of [['bad scope'], ['x:y\nsecret'], ['offline_access'], ['a:' + 'b'.repeat(128)], Array(151).fill('a:b')]) {
+    expect(() => authorize('cli_synthetic', 'confidential', true, false, false, scopes)).toThrow();
+  }
+});
+it('keeps the reviewed productivity pack explicit and excludes unapproved user sending/document search and unrelated administration', () => {
+  const pack = JSON.parse(readFileSync(new URL('../docs/permission-packs/productivity-user-scopes.json', import.meta.url), 'utf8'));
+  expect(pack.scopes).toHaveLength(62); expect(new Set(pack.scopes).size).toBe(62);
+  const flow = authorize('cli_synthetic', 'confidential', true, true, true, pack.scopes);
+  expect(flow.scopes).toHaveLength(77);
+  for (const scope of pack.excluded) expect(flow.scopes).not.toContain(scope);
+  expect(pack.scopes.some((scope: string) => /^(admin|attendance|contact|corehr|approval):/.test(scope))).toBe(false);
+  expect(pack.scopes).not.toContain('docs:permission.setting:write_only');
+});
+it.each(['temporary', 'persistent', 'missing-token', 'missing-expiry', 'missing-scope', 'extra-granted', 'extra-missing'] as const)('runs a protected %s login callback without silently losing persistent login or extra grants', async variant => {
+  const offline = variant !== 'temporary'; const rejected = !['temporary', 'persistent', 'extra-granted'].includes(variant);
+  const extraScopes = variant.startsWith('extra-') ? ['sheets:spreadsheet:create'] : [];
   const { config, cleanup } = await setup(); const previous = session({ refreshToken: 'existing-refresh', refreshExpiresAt: Date.now() + 100000 });
   const store = new MemoryStore(previous);
   let ready!: (url: string) => void; const opening = new Promise<string>(resolve => { ready = resolve; });
-  const finished = login({ config, store, appId: 'cli_synthetic', offline, documentBoards: true, replace: false, onReady: ready,
+  const finished = login({ config, store, appId: 'cli_synthetic', offline, documentBoards: true, extraScopes, replace: false, onReady: ready,
     fetcher: fakeFetch((url, init) => {
       if (url.pathname.endsWith('/token')) {
         const payload = JSON.parse(String(init.body));
@@ -39,8 +60,10 @@ it.each(['temporary', 'persistent', 'missing-token', 'missing-expiry', 'missing-
         expect(payload.redirect_uri).toBe(CALLBACK); expect(payload.code_verifier).toBeUndefined();
         expect(payload.scope.split(' ').includes('offline_access')).toBe(offline);
         for (const scope of BOARD_SCOPES) expect(payload.scope.split(' ')).toContain(scope);
+        for (const scope of extraScopes) expect(payload.scope.split(' ')).toContain(scope);
         return new Response(JSON.stringify({ code: 0, access_token: 'synthetic-user-token', expires_in: 3600,
-          scope: [...BASE_SCOPES, ...BOARD_SCOPES, ...(offline && variant !== 'missing-scope' ? ['offline_access'] : [])].join(' '),
+          scope: [...BASE_SCOPES, ...BOARD_SCOPES, ...(offline && variant !== 'missing-scope' ? ['offline_access'] : []),
+            ...(variant === 'extra-granted' ? extraScopes : [])].join(' '),
           ...(variant !== 'missing-token' ? { refresh_token: 'synthetic-refresh' } : {}),
           ...(variant !== 'missing-expiry' ? { refresh_token_expires_in: 10000 } : {}) }));
       }
@@ -71,8 +94,8 @@ it.each(['temporary', 'persistent', 'missing-token', 'missing-expiry', 'missing-
     expect(completed.status).toBe(rejected ? 400 : 200); const completion = await completed.text();
     const error = await outcome;
     if (rejected) {
-      expect(error).toMatchObject({ kind: 'PERSISTENT_LOGIN_UNAVAILABLE' });
-      expect(completion).toContain('Existing local credentials were not replaced');
+      expect(error).toMatchObject({ kind: variant === 'extra-missing' ? 'MISSING_SCOPE' : 'PERSISTENT_LOGIN_UNAVAILABLE' });
+      if (variant !== 'extra-missing') expect(completion).toContain('Existing local credentials were not replaced');
       expect(store.value).toEqual(previous);
       return;
     }
@@ -82,6 +105,7 @@ it.each(['temporary', 'persistent', 'missing-token', 'missing-expiry', 'missing-
     expect(store.value).toMatchObject({ appId: 'cli_synthetic', userId: 'ou_synthetic', tenantId: 'tenant_synthetic', authMode: 'confidential' });
     expect(store.value?.refreshToken).toBe(offline ? 'synthetic-refresh' : undefined);
     for (const scope of BOARD_SCOPES) expect(store.value?.scopes).toContain(scope);
+    for (const scope of extraScopes) expect(store.value?.scopes).toContain(scope);
   } finally { await cleanup(); }
 });
 it('refresh rotates credentials and checks user identity', async () => {
