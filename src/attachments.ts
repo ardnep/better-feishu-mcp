@@ -54,7 +54,6 @@ export async function extractAttachment(bytes: Buffer, fileName = '', signal?: A
     const entryBytes = Buffer.from(parsed.entryBytes); const name = parsed.entry.name;
     const mimeType = imageMime(entryBytes);
     if (mimeType) {
-      if (entryBytes.length > 350_000) throw new AppError('ATTACHMENT_TOO_LARGE', 'ZIP image exceeds the 350000-byte inline image limit.');
       return { text: '', truncated: false, archiveEntry: parsed.entry, image: { mimeType, data: entryBytes.toString('base64') }, note };
     }
     if (isZip(entryBytes, name) && !/\.docx$/i.test(name)) throw new AppError('UNSUPPORTED_ATTACHMENT', 'Nested archives are not expanded. Select a supported text, PDF, DOCX or image entry.');

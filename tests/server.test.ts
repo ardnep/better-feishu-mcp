@@ -245,6 +245,20 @@ it('blocks optional legacy MCP commit without local approval; signed approval wo
     expect(replay.isError).toBe(true); expect(output(replay).error.kind).toBe('OPERATION_NOT_FOUND');
   } finally { await f.close(); }
 });
+it('delivers an original image above both former attachment size caps over real MCP stdio', async () => {
+  const f = await connection();
+  try {
+    const result = await f.client.callTool({ name: 'messages_read_attachment', arguments: { messageId: 'om_large', visibility: 'group', resourceKey: 'img_large', type: 'image' } });
+    expect(result.isError).not.toBe(true);
+    const image = result.content.find(c => c.type === 'image');
+    expect(image?.type).toBe('image');
+    if (image?.type !== 'image') throw new Error('Missing image');
+    const bytes = Buffer.from(image.data, 'base64');
+    expect(bytes.length).toBe(5_000_001);
+    expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    expect(output(result).sizeBytes).toBe(bytes.length);
+  } finally { await f.close(); }
+});
 it('reads text and native image attachments over real MCP stdio', async () => {
   const f = await connection();
   try {

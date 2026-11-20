@@ -49,6 +49,7 @@ it('downloads bounded resources, preserving real JSON files and sanitizing provi
   await expect(error.download(path)).rejects.toMatchObject({ kind: 'FEISHU_ERROR', details: { code: 123 } });
   const oversized = new FeishuHttp(async () => session(), fakeFetch(() => new Response(new Uint8Array(5_000_001))), 0);
   await expect(oversized.download(path)).rejects.toMatchObject({ kind: 'RESPONSE_TOO_LARGE' });
+  expect((await oversized.download(path, { downloadByteLimit: null })).length).toBe(5_000_001);
   const denied = new FeishuHttp(async () => session(), fakeFetch(() => new Response('{"code":403,"msg":"private"}', { status: 403 })), 0);
   await expect(denied.download(path)).rejects.toMatchObject({ kind: 'FEISHU_ERROR', details: { httpStatus: 403 } });
 });

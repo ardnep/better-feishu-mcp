@@ -2,6 +2,12 @@
 
 Status: **live API validation passed for the tested workflows/app/user/tenant**, not every tool. The original API proof below was followed by a built local MCP and real stdio-client validation. This is a local alpha, not a production-readiness claim.
 
+## Attachment size-cap follow-up — 2026-11-20
+
+At the user's request, removed the message-attachment download-byte cap and the 350 KB inline-image cap, including images selected from ZIPs. Originals are returned unchanged; there is no automatic resizing/compression. Separate Drive/media/local-file transfers retain their 5 MB bounds, and ZIP expansion, PDF/DOCX parsing, text extraction, timeout/cancellation, scope and source-message binding safeguards remain unchanged. Large original images may still exceed client/model/provider limits or available process memory.
+
+`npm test` passed 206 tests across 13 files. Regression tests read images above the former 350000-byte and 5000000-byte thresholds, including a screenshot uploaded as a file and a ZIP image, and verify byte-for-byte preservation. A real SDK-client/stdio-server test successfully delivered a 5000001-byte image (over 6.6 MB base64). Existing default download bounds still reject oversized resources outside the message reader. These are synthetic-provider tests; the user's actual failing screenshot has not been identified or retried in this session.
+
 ## Productivity implementation — 0.2.0, 2026-11-20
 
 Added 88 focused tools, with unchanged user authentication and write opt-in. See the [scope/capability manifest](productivity-coverage.md) for exact implemented/live-tested/blocked boundaries. Automated validation covers 204 tests across 13 files plus five historical auth-harness tests, credential-free stdio smoke, and real-stdio discovery/annotations with writes enabled and disabled.

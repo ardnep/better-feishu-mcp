@@ -80,13 +80,14 @@ export class Messages {
     const attachment = message.items.flatMap(item => item.attachments).find(a => a.resourceKey === resourceKey && a.type === type);
     if (!attachment) throw new AppError('ATTACHMENT_NOT_FOUND', 'Resource key and type must belong to the specified message. Read messages_get for attachment metadata first.');
     const bytes = await this.api.download(`/im/v1/messages/${encodeURIComponent(id)}/resources/${encodeURIComponent(resourceKey)}?type=${type}`, {
+      downloadByteLimit: null,
       scopes: [['im:message:readonly', 'im:message'], visibility === 'group' ? 'im:message.group_msg:get_as_user' : 'im:message.p2p_msg:get_as_user'], signal,
     });
     const mimeType = imageMime(bytes);
     if (mimeType) {
       if (archiveEntry !== undefined) throw new AppError('INVALID_ARCHIVE', 'archiveEntry can only be used with ZIP attachments.');
-      // Base64 plus MCP metadata must fit within the existing 512 KB result budget.
-      if (bytes.length > 350_000) throw new AppError('ATTACHMENT_TOO_LARGE', 'Image exceeds the 350000-byte inline image limit.');
+      // Return original bytes without an application image-size cap or lossy conversion.
+      // The client/provider and available process memory may still constrain delivery.
       return { attachment, sizeBytes: bytes.length, untrustedData: true, image: { mimeType, data: bytes.toString('base64') } };
     }
     if (type === 'image') throw new AppError('UNSUPPORTED_ATTACHMENT', 'Image is not a supported PNG, JPEG, GIF or WebP resource.');

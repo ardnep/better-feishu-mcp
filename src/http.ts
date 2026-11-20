@@ -29,7 +29,7 @@ export async function boundedJson(response: Response, maximum = 2_000_000): Prom
   try { return JSON.parse(bytes.toString('utf8')) as unknown; }
   catch { throw new AppError('INVALID_RESPONSE', 'Provider returned invalid JSON.'); }
 }
-type RequestOptions = { body?: unknown; scopes?: readonly (string | readonly string[])[]; signal?: AbortSignal; safeRead?: boolean };
+type RequestOptions = { body?: unknown; scopes?: readonly (string | readonly string[])[]; signal?: AbortSignal; safeRead?: boolean; downloadByteLimit?: number | null };
 const envelope = z.object({ code: z.number(), data: z.unknown().optional(), error: z.object({
   log_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(),
   permission_violations: z.array(z.object({ subject: z.string().regex(/^[a-z0-9_.:-]+$/), type: z.string() })).optional(),
@@ -84,7 +84,7 @@ export class FeishuHttp {
       }
       let payload: unknown;
       if (binary && response.ok) {
-        const bytes = await boundedBytes(response, 5_000_000);
+        const bytes = await boundedBytes(response, options.downloadByteLimit === null ? Infinity : options.downloadByteLimit ?? 5_000_000);
         // Feishu may report API errors as HTTP 200 JSON. A download disposition
         // distinguishes actual JSON attachments from these error envelopes.
         if (!response.headers.has('content-disposition') && response.headers.get('content-type')?.includes('application/json')) {

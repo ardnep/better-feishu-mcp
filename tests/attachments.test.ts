@@ -44,14 +44,29 @@ it('checks visibility scopes before any attachment fetch', async () => {
   await expect(messages.readAttachment('om_attachment', 'p2p', 'file_fixture', 'file')).rejects.toMatchObject({ kind: 'MISSING_SCOPE' });
   expect(calls).toBe(0);
 });
-it('sniffs image bytes and rejects unsupported or oversized images', async () => {
+it('sniffs image bytes, rejects unsupported images and returns originals above former size caps', async () => {
   const read = (bytes: Buffer) => new Messages(new FeishuHttp(async () => session(), fakeFetch(url =>
     url.pathname.includes('/resources/') ? new Response(new Uint8Array(bytes))
       : json({ items: [item({ image_key: 'img_fixture' }, 'image')] })), 0))
     .readAttachment('om_attachment', 'group', 'img_fixture', 'image');
   await expect(read(Buffer.from('<svg>not a safe raster image</svg>'))).rejects.toMatchObject({ kind: 'UNSUPPORTED_ATTACHMENT' });
-  const large = Buffer.alloc(350_001); Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(large);
-  await expect(read(large)).rejects.toMatchObject({ kind: 'ATTACHMENT_TOO_LARGE' });
+  for (const size of [350_001, 5_000_001]) {
+    const large = Buffer.alloc(size); Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(large);
+    const result = await read(large);
+    expect(result.sizeBytes).toBe(size); expect(result.image?.mimeType).toBe('image/png');
+    expect(Buffer.from(result.image!.data, 'base64')).toEqual(large);
+  }
+});
+it('reads a large screenshot uploaded as a file and a ZIP image above the former inline cap', async () => {
+  const bytes = Buffer.alloc(5_000_001); Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes);
+  const messages = new Messages(new FeishuHttp(async () => session(), fakeFetch(url => url.pathname.includes('/resources/')
+    ? new Response(new Uint8Array(bytes)) : json({ items: [item({ file_key: 'file_fixture', file_name: 'screenshot.png' })] })), 0));
+  const result = await messages.readAttachment('om_attachment', 'group', 'file_fixture', 'file');
+  expect(Buffer.from(result.image!.data, 'base64')).toEqual(bytes);
+  const entry = bytes.subarray(0, 350_001);
+  const zip = zipSync({ 'screenshot.png': new Uint8Array(entry) });
+  const extracted = await extractAttachment(Buffer.from(zip), 'screenshots.zip', undefined, 'screenshot.png');
+  expect(Buffer.from(extracted.image!.data, 'base64')).toEqual(entry);
 });
 it('extracts bounded UTF-8 text without executing HTML, formulas or code', async () => {
   await expect(extractAttachment(Buffer.from('<script>alert(1)</script>'), 'page.html')).resolves.toMatchObject({ text: '<script>alert(1)</script>' });
