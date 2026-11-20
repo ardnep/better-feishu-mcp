@@ -2,6 +2,12 @@
 
 Status: **live API validation passed for the tested app/user/tenant**. The original API proof below was followed by a built local MCP and real stdio-client validation, described next. This is a local alpha, not a public production release.
 
+## Persistent-login validation — 2026-11-20
+
+Persistent renewal is now the default; `--temporary` explicitly selects non-renewing credentials. Missing offline grant, refresh token or refresh lifetime fails login before replacing saved credentials. The integrated build passed 101 tests across 12 files, credential-free stdio smoke checks, five historical auth-harness tests and `git diff --check`.
+
+Live reauthorization returned renewable credentials. A controlled probe treated the loaded access token as expired to exercise the normal `SessionManager.token()` rotation path without waiting for natural expiry. Exactly one refresh succeeded, rotated the refresh token, preserved app/user/tenant and login binding, and saved active credentials in the OS keychain. A second token request reused those credentials without another rotation; a read-only chat-list API call succeeded. The already-running MCP independently observed the renewed, unexpired credentials without restart. No live content was changed. Natural long-duration expiry, revoked authorization, and network/crash recovery remain unverified.
+
 ## Built MCP validation
 
 The built CLI completed identity-bound OAuth and stored credentials in the macOS keychain. A real SDK client launched `dist/cli.js serve --stdio` in a separate process, discovered the expected tool policy, read the temporary chat fixture, rejected an unapproved write, then completed document creation with content, text/block reads, targeted replacement and readback, deletion and a post-delete read confirming a deleted/not-found error. The disposable document needed no pending cleanup.
