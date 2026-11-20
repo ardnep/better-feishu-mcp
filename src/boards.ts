@@ -12,7 +12,7 @@ export const addBoardSchema = z.object({
     'Provide Mermaid flowchart/graph source with a direction, without Markdown fences.'),
 }).strict();
 export const readBoardSchema = z.object({
-  boardId: boardIdSchema, limit: z.number().int().min(1).max(100).default(50), offset: z.number().int().min(0).max(10_000).default(0),
+  boardId: boardIdSchema, limit: z.number().int().min(1).max(100).default(50), offset: z.number().int().min(0).default(0),
 }).strict();
 const createdBlocks = z.object({ document_revision_id: z.number().int().positive(), children: z.array(z.object({
   block_id: idSchema, block_type: z.number().int(), board: z.object({ token: z.string() }).optional(),
