@@ -15,8 +15,8 @@ export const dataObject = z.record(z.string().min(1).max(255), z.json()).refine(
 export const encode = encodeURIComponent;
 export type ScopeGroups = readonly (string | readonly string[])[];
 export type Endpoint = { path: string; query?: Record<string, string | number | boolean | undefined>; body?: unknown;
-  lock?: string; page?: boolean; pageSizeKey?: string; pageTokenKey?: string;
-  upload?: { path: string; fields: Record<string, string>; sizeField?: boolean }; download?: string };
+  lock?: string; page?: boolean; pageSizeKey?: string; pageTokenKey?: string; pageInBody?: boolean;
+  upload?: { path: string; fields: Record<string, string>; sizeField?: boolean; fileField?: string }; download?: string };
 export interface ProductivityContext { api: FeishuHttp; config: Settings; sessions: SessionManager; cursors: Cursors }
 export interface ProductivityTool {
   name: string; description: string; schema: z.ZodType; write: boolean; scopes: ScopeGroups;
@@ -43,7 +43,12 @@ export function endpoint<S extends z.ZodType>(name: string, description: string,
       const provider = context.cursors.get(binding, pagination.cursor);
       if (provider) query.set(request.pageTokenKey ?? 'page_token', provider);
     }
-    const path = request.path + (query.size ? (request.path.includes('?') ? '&' : '?') + query : '');
+     if (request.pageInBody) {
+       request.body = { ...request.body as Record<string, unknown>, [request.pageSizeKey ?? 'page_size']: Number(query.get(request.pageSizeKey ?? 'page_size')),
+         ...(query.has(request.pageTokenKey ?? 'page_token') ? { [request.pageTokenKey ?? 'page_token']: query.get(request.pageTokenKey ?? 'page_token') } : {}) };
+       query.delete(request.pageSizeKey ?? 'page_size'); query.delete(request.pageTokenKey ?? 'page_token');
+     }
+     const path = request.path + (query.size ? (request.path.includes('?') ? '&' : '?') + query : '');
     const perform = async () => {
       if (request.download) return downloadFile(context.api, path, request.download, scopes, signal);
       const body = request.upload ? await uploadForm(request.upload, signal) : request.body;

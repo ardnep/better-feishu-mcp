@@ -8,7 +8,7 @@ import type { FeishuHttp } from './http.js';
 import type { ScopeGroups } from './productivity.js';
 export const localPath = z.string().min(1).max(4096).refine(p => isAbsolute(p) && normalize(p) === p && !p.includes('\0'), 'Use a canonical absolute local path.');
 const maximum = 5_000_000;
-export async function uploadForm(input: { path: string; fields: Record<string, string>; sizeField?: boolean }, signal?: AbortSignal) {
+export async function uploadForm(input: { path: string; fields: Record<string, string>; sizeField?: boolean; fileField?: string }, signal?: AbortSignal) {
   localPath.parse(input.path); signal?.throwIfAborted();
   if (await realpath(input.path) !== input.path) throw new AppError('UNSAFE_FILE', 'Symlink components are not allowed.');
   const file = await open(input.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -21,7 +21,7 @@ export async function uploadForm(input: { path: string; fields: Record<string, s
     const form = new FormData();
     for (const [key, value] of Object.entries(input.fields)) form.set(key, value);
     if (input.sizeField) { form.set('size', String(size)); form.set('file_name', basename(input.path)); }
-    form.set('file', new Blob([new Uint8Array(buffer.subarray(0, size))]), basename(input.path));
+    form.set(input.fileField ?? 'file', new Blob([new Uint8Array(buffer.subarray(0, size))]), basename(input.path));
     return form;
   } finally { await file.close(); }
 }

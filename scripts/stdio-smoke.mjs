@@ -52,7 +52,9 @@ try {
   const tools = (await client.listTools()).tools.map(t => t.name);
   assert.ok(tools.includes('messages_search') && tools.includes('documents_read'));
   assert.ok(['sheets_get', 'sheets_list', 'sheets_read', 'boards_get_nodes'].every(name => tools.includes(name)));
-  assert.ok(!tools.some(t => /send|documents_search|operations_approve/.test(t)));
+  assert.ok(tools.includes('documents_search'));
+  assert.equal(tools.includes('messages_send'), crud);
+  assert.ok(!tools.some(t => /operations_approve/.test(t)));
   assert.ok(!tools.some(t => /documents_prepare_|operations_/.test(t))); checks.push('stdio_discovery_and_tool_policy');
   for (const name of ['documents_create', 'documents_update', 'documents_delete', 'documents_add_board']) assert.equal(tools.includes(name), crud);
   const status = await call('auth_status'); assert.equal(status.loggedIn, live);

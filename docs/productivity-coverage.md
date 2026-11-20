@@ -1,5 +1,9 @@
 # Productivity coverage — 0.2.0
 
+Historical release evidence. The later [core workflow expansion](core-workflows.md)
+supersedes the exclusions/tool counts below and records current consent and
+live-test results. The v0.2.0 release tag itself has not been moved.
+
 Evidence date: 2026-11-20. This is scoped API support, not arbitrary format round-tripping or a guarantee of tenant/resource access. The 62 reviewed extra grants remain unchanged. Normal tools reuse the existing user login; mutations and local downloads require the existing write opt-in, not local per-document approvals.
 
 This release adds **88 tools** (31 read tools and 57 mutations/local-download tools), for **106 normal tools** when writes are enabled, or 45 when disabled. Legacy approval tools remain hidden by default. Automated scope coverage asserts that every reviewed grant is mapped to an implemented surface or the explicit board-update blocker, and excluded capabilities are not introduced.

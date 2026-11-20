@@ -1,0 +1,26 @@
+{
+  "description": "Core scope additions enabled in app version 0.2.0, with two selection discrepancies explicitly retained. This file is not proof of user consent or live API success.",
+  "reviewedAt": "2026-11-20",
+  "userConsentVerified": true,
+  "verification": "Version 0.2.0 was observed Released/Approved. OAuth rejected only the intended task:task:write and docs:permission.setting:read additions (20027). Console inspection confirmed task:task:writeonly and docs:permission.setting:readonly were selected instead. Pending corrective selections were cancelled at the user's request; no further approval is being sought. Subsequent same-account consent succeeded and CLI status confirmed every scope listed here with an active renewable login; all existing grants were preserved.",
+  "deferredScopes": ["task:task:write", "docs:permission.setting:read"],
+  "scopes": [
+    "search:docs:read",
+    "space:document:retrieve",
+    "task:task:writeonly",
+    "task:tasklist:write",
+    "im:message.send_as_user",
+    "contact:contact.base:readonly",
+    "contact:user.base:readonly",
+    "im:resource",
+    "docs:permission.member:retrieve",
+    "docs:permission.member:create",
+    "docs:permission.member:update",
+    "docs:permission.member:delete",
+    "docs:permission.setting:readonly",
+    "base:app:update",
+    "base:view:write_only",
+    "im:chat:update",
+    "im:chat.members:write_only"
+  ]
+}

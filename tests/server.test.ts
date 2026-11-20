@@ -172,7 +172,7 @@ it('serves a legacy initialize/tools-list exchange with protocol-only stdout', a
     expect(tools).toContain('documents_read'); expect(tools).not.toContain('operations_commit');
   } finally { child.stdin.end(); child.kill(); await env.cleanup(); }
 });
-it('discovers read tools over real stdio, keeps writes/sending/search-docs absent and labels hostile data', async () => {
+it('discovers read tools including document search over real stdio, keeps writes absent and labels hostile data', async () => {
   const f = await connection();
   try {
     const list = await f.client.listTools(); const names = list.tools.map(t => t.name);
@@ -180,7 +180,8 @@ it('discovers read tools over real stdio, keeps writes/sending/search-docs absen
     expect(names).not.toContain('operations_commit');
     for (const tool of productivityTools) expect(names.includes(tool.name)).toBe(!tool.write);
     for (const name of ['documents_create', 'documents_update', 'documents_delete', 'documents_add_board']) expect(names).not.toContain(name);
-    expect(names.some(n => /send|approve|documents_search/.test(n))).toBe(false);
+    expect(names).toContain('documents_search');
+    expect(names.some(n => /send|approve/.test(n))).toBe(false);
     const status = output(await f.client.callTool({ name: 'auth_status', arguments: {} }));
     expect(status.loggedIn).toBe(true); expect(status.accessToken).toBeUndefined(); expect(status.appSecret).toBeUndefined();
     const chats = output(await f.client.callTool({ name: 'chats_list', arguments: { limit: 1 } }));

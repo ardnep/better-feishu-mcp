@@ -2,6 +2,15 @@
 
 Status: **live API validation passed for the tested workflows/app/user/tenant**, not every tool. The original API proof below was followed by a built local MCP and real stdio-client validation. This is a local alpha, not a production-readiness claim.
 
+## Core workflow expansion — 2026-11-20
+
+Added 39 tools (145 total with writes enabled), retaining user-only identity and
+the existing write gate. `npm test` passed **253 tests across 14 files**; the
+five auth-harness checks and credential-free real-stdio smoke also passed.
+New worker coverage includes limited XLSX/PPTX extraction. See
+[core workflow coverage](core-workflows.md) for live checks, scope discrepancies,
+deferred approvals, corrected primary-calendar RSVP, and retained test artifacts.
+
 ## Attachment size-cap follow-up — 2026-11-20
 
 At the user's request, removed the message-attachment download-byte cap and the 350 KB inline-image cap, including images selected from ZIPs. Originals are returned unchanged; there is no automatic resizing/compression. Separate Drive/media/local-file transfers retain their 5 MB bounds, and ZIP expansion, PDF/DOCX parsing, text extraction, timeout/cancellation, scope and source-message binding safeguards remain unchanged. Large original images may still exceed client/model/provider limits or available process memory.

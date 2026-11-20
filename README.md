@@ -6,7 +6,7 @@ A local TypeScript MCP that uses **your Feishu identity** for messages, Docs, Sh
 
 - **No bot membership in chats.** App/bot registration may be required; adding the bot to a chat is not part of this implementation.
 - **No tenant-token fallback.** Unsupported or missing user access fails explicitly.
-- **No message sending or document search.** Those scopes required approval and are excluded.
+- **Explicit user sending and document search.** These require separately enabled app scopes and user consent. Sending never falls back to a bot. Human-message editing and user-only group creation remain unsupported.
 - **Writes off by default.** When enabled, direct document tools use your existing login, without per-document authorization or per-edit terminal approval. Legacy approval tools are hidden unless explicitly opted into.
 
 For a scannable light-mode overview, open [setup and current status](docs/review/setup.html). See [security boundaries](SECURITY.md) before use.
@@ -72,6 +72,8 @@ The local form lists the complete requested scope set before consent. Extra scop
 
 The optional [productivity permission pack](docs/permission-packs/productivity-user-scopes.json) records 62 extra scopes: 59 newly added review-free user grants plus three previously enabled board/media grants. This classification was checked in the authorized app console on 2026-11-20 and is **not a universal Feishu approval exemption**. The pack includes user-scoped content changes, deletion and broad calendar management, but excludes document-sharing administration, tenant-token grants, HR/attendance/organization administration, and user-send/document-search grants absent from the review-free results. Nothing loads the pack automatically. See [productivity coverage and live limits](docs/productivity-coverage.md) for implemented versus live-validated capabilities.
 
+The later [core permission pack](docs/permission-packs/core-user-scopes.json) records the app-version additions separately. Two intended grants were not enabled: `task:task:write` and `docs:permission.setting:read`; their similarly named `writeonly`/`readonly` variants were selected instead. Further app approval was deferred. Basic task creation/update/completion can use the narrow task grant; assignment, task-list placement and task deletion remain gated by the full grant. Permission-settings reads remain gated by the documented `read` scope rather than pretending `readonly` is equivalent.
+
 ## Connect an MCP client
 
 Use the client's local **stdio** integration. Replace the path below with the actual built repository path; use an absolute Node executable path if your client cannot find Node 24.
@@ -120,18 +122,22 @@ Group history/get/search have passed live tests in the sole-user fixture chat wi
 |---|---|
 | `sheets_*` | Create, read metadata/tabs/ranges, overwrite exact ranges, opt-in formulas, rename, create/update/delete tabs |
 | `drive_*` | Root/explicit-file metadata, create folders, copy/move/shortcuts, bounded upload/download, asynchronous import/export/status/download |
-| `base_*` | Create/read Base; table/field/record CRUD; filtered record search; view listing |
+| `base_*` | Create/read/rename Base; table/field/record CRUD; filtered record search; create/rename/hide-fields/delete views |
 | `wiki_spaces_*`, `wiki_nodes_*` | Space list/read/private creation; node list/create/rename/move/copy |
 | `comments_*` | Whole-document text comments, resolve/reopen, reply/create/update/delete |
 | `boards_delete_nodes` | Delete explicit native nodes; existing board creation/read tools remain |
-| `calendars_*`, `calendar_events_*`, `calendar_freebusy` | Calendar/event CRUD, paginated discovery, explicit-user availability |
-| `tasks_*`, `tasklists_*`, `task_*` | Task/tasklist reads; comment/section/custom-field operations; attachment list/upload/delete |
+| `calendars_*`, `calendar_events_*`, `calendar_attendees_*`, `calendar_freebusy` | Calendar/event CRUD, discovery, availability, named-user invitations/removal, RSVP; deliberate notifications |
+| `tasks_*`, `tasklists_*`, `task_*` | Task create/update/complete/reopen; list CRUD/members; full-scope-gated assignment/list placement/deletion; existing ancillary operations |
 | `chats_members`, `messages_reactions_*`, `messages_pin/unpin`, `messages_pins_list` | Member reads, reactions and pins; not message sending |
+| `messages_send/reply/recall`, `messages_upload_*` | Explicit user sending/replying, verified-own recall, native file/image upload; required delivery UUID |
+| `people_get`, `chats_search/get/update`, `chats_members_add/delete` | Explicit-ID people lookup, visible-group discovery/details/name/description, human-only member coordination |
+| `documents_search`, `drive_files_list` | Filtered document/Wiki search and explicit-folder browsing with query-bound pagination |
+| `sharing_members_*`, `sharing_settings_get` | Named-user collaborator roles/revocation; settings read only with its documented scope; no public-sharing changes or owner transfer |
 | `documents_media_download` | Bounded media download to a new explicit local path |
 
 All mutations **and local downloads** require `BETTER_FEISHU_MCP_ENABLE_WRITES=1`; read tools remain available without it. New tools use explicit tokens/IDs, not URLs (existing document/Sheets read tools retain their link support). Uploads/downloads are limited to 5 MB and canonical absolute paths; existing destinations are never overwritten. Failed downloads may leave an empty/partial target. Native Base field values and task custom-field settings are bounded data, not arbitrary API requests. Lists return opaque identity/query-bound cursors; calendar lists use the provider's minimum page size of 50. Async jobs must be polled explicitly; a ticket is not completion.
 
-**Known limits:** no verified board-node update API is exposed. Document reply creation was rejected by Feishu content review (`1069302`); reply update/delete remain fixture-tested only. Wiki writes, task ancillary writes, chat mutations and media downloads have not been live-validated. This is not arbitrary content-format round-tripping, document sharing administration, task creation/completion, message sending or document search. See the [coverage record](docs/productivity-coverage.md) before relying on a capability.
+**Known limits:** no verified board-node update API is exposed. Document reply creation was rejected by Feishu content review (`1069302`); reply update/delete remain fixture-tested only. Human-message editing, user-only group creation and global fuzzy people search are not implemented. Message recall is conversation-wide and subject to provider policy. New native uploads retain the 5 MB local upload guard; message downloads/inline images remain uncapped by the application. XLSX/PPTX attachments support text extraction only, not layout or lossless round-tripping. See the [core workflow coverage](docs/core-workflows.md) and [earlier coverage record](docs/productivity-coverage.md) for live evidence and limitations.
 
 ### Online Sheets
 

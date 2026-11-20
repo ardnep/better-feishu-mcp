@@ -45,7 +45,8 @@ export async function extractAttachment(bytes: Buffer, fileName = '', signal?: A
   signal?.throwIfAborted();
   const pdf = bytes.subarray(0, 5).toString() === '%PDF-';
   const docx = /\.docx$/i.test(fileName) && bytes.subarray(0, 2).toString() === 'PK';
-  const zip = !docx && !pdf && isZip(bytes, fileName);
+  const office = /\.(xlsx|pptx)$/i.exec(fileName)?.[1]?.toLowerCase() as 'xlsx' | 'pptx' | undefined;
+  const zip = !docx && !pdf && !office && isZip(bytes, fileName);
   if (archiveEntry !== undefined && !zip) throw new AppError('INVALID_ARCHIVE', 'archiveEntry can only be used with ZIP attachments.');
   if (zip) {
     const parsed = await parseAttachment(bytes, 'zip', signal, archiveEntry);
@@ -56,13 +57,14 @@ export async function extractAttachment(bytes: Buffer, fileName = '', signal?: A
     if (mimeType) {
       return { text: '', truncated: false, archiveEntry: parsed.entry, image: { mimeType, data: entryBytes.toString('base64') }, note };
     }
-    if (isZip(entryBytes, name) && !/\.docx$/i.test(name)) throw new AppError('UNSUPPORTED_ATTACHMENT', 'Nested archives are not expanded. Select a supported text, PDF, DOCX or image entry.');
+    if (isZip(entryBytes, name) && !/\.(docx|xlsx|pptx)$/i.test(name)) throw new AppError('UNSUPPORTED_ATTACHMENT', 'Nested archives are not expanded. Select a supported text, PDF, DOCX, XLSX, PPTX or image entry.');
     return { ...await extractAttachment(entryBytes, name, signal), archiveEntry: parsed.entry };
   }
+  if (office) return parseAttachment(bytes, office, signal);
   if (!pdf && !docx) {
     // No HTML execution, CSV formula evaluation, MIME-based trust, or binary-to-text guessing.
     if (!/\.(txt|md|markdown|csv|tsv|json|jsonl|xml|html?|log|ya?ml|toml|ini|sql|[cm]?[jt]sx?|py|rs|go|java|c|h|cpp|sh)$/i.test(fileName)) {
-      throw new AppError('UNSUPPORTED_ATTACHMENT', 'Readable formats: UTF-8 text/code, PNG/JPEG/GIF/WebP images, PDF, DOCX and ZIP entries. Other formats and OCR/transcription are not supported.');
+      throw new AppError('UNSUPPORTED_ATTACHMENT', 'Readable formats: UTF-8 text/code, PNG/JPEG/GIF/WebP images, PDF, DOCX, XLSX/PPTX text and ZIP entries. Legacy XLS/PPT, other formats and OCR/transcription are not supported.');
     }
     let text: string;
     try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
@@ -72,7 +74,7 @@ export async function extractAttachment(bytes: Buffer, fileName = '', signal?: A
   }
   return parseAttachment(bytes, pdf ? 'pdf' : 'docx', signal);
 }
-async function parseAttachment(bytes: Buffer, format: 'pdf' | 'docx' | 'zip', signal?: AbortSignal, archiveEntry?: string): Promise<ParserResult> {
+async function parseAttachment(bytes: Buffer, format: 'pdf' | 'docx' | 'zip' | 'xlsx' | 'pptx', signal?: AbortSignal, archiveEntry?: string): Promise<ParserResult> {
   signal?.throwIfAborted();
   // Keep untrusted document/archive parsers off the MCP thread, bounded in time and JS heap.
   return new Promise((resolve, reject) => {

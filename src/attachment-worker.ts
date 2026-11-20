@@ -3,10 +3,13 @@ import { unzipSync } from 'fflate';
 import mammoth from 'mammoth';
 import { PDFParse } from 'pdf-parse';
 import { readZip } from './zip.js';
+import { extractOfficeText } from './office-text.js';
 
 try {
   const bytes = Buffer.from(workerData.bytes as Uint8Array);
-  if (workerData.format === 'zip') {
+  if (workerData.format === 'xlsx' || workerData.format === 'pptx') {
+    parentPort?.postMessage(extractOfficeText(bytes, workerData.format));
+  } else if (workerData.format === 'zip') {
     parentPort?.postMessage({ text: '', truncated: false, ...readZip(bytes, workerData.archiveEntry as string | undefined) });
   } else {
     let text: string; let truncated = false; let note: string | undefined;
