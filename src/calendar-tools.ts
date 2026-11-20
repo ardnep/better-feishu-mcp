@@ -1,0 +1,24 @@
+import { z } from 'zod';
+import { idSchema } from './core.js';
+import { encode as e, endpoint, pageInput, shortText, text, type ProductivityTool } from './productivity.js';
+const calendarId = z.string().min(1).max(256).regex(/^[A-Za-z0-9_@.\-]+$/);
+const calendar = { calendarId };
+const event = { ...calendar, eventId: idSchema };
+const root = (a: { calendarId: string }) => `/calendar/v4/calendars/${e(a.calendarId)}`;
+const time = z.union([z.object({ timestamp: z.string().regex(/^[0-9]{1,12}$/), timezone: z.string().min(1).max(100).optional() }).strict(), z.object({ date: z.iso.date() }).strict()]);
+const fields = { summary: shortText, description: text.optional(), start_time: time, end_time: time };
+const scopes = ['calendar:calendar'];
+const calendarPage = { ...pageInput, limit: z.literal(50).default(50) };
+export const calendarTools: ProductivityTool[] = [
+  endpoint('calendars_list', 'List up to 50 accessible calendars (provider minimum page size).', z.object(calendarPage).strict(), scopes, 'GET', () => ({ path: '/calendar/v4/calendars', page: true })),
+  endpoint('calendars_get', 'Read one explicit calendar.', z.object(calendar).strict(), scopes, 'GET', a => ({ path: root(a) })),
+  endpoint('calendars_create', 'Create a private shared calendar; does not add subscribers or change sharing.', z.object({ summary: shortText, description: text.optional() }).strict(), scopes, 'POST', a => ({ path: '/calendar/v4/calendars', body: { ...a, permissions: 'private' }, lock: 'calendar-create' })),
+  endpoint('calendars_update', 'Update a calendar title/description, without changing sharing.', z.object({ ...calendar, summary: shortText, description: text.optional() }).strict(), scopes, 'PATCH', a => ({ path: root(a), body: { summary: a.summary, description: a.description }, lock: root(a) })),
+  endpoint('calendars_delete', 'Delete an explicit calendar and its events. Destructive; never use on a primary calendar.', z.object(calendar).strict(), scopes, 'DELETE', a => ({ path: root(a), lock: root(a) })),
+  endpoint('calendar_events_list', 'Read up to 50 events per page anchored at an explicit Unix-second timestamp. Recurring events may predate the anchor; filter returned times. Uses anchor_time rather than the silently truncated time-window API.', z.object({ ...calendar, ...calendarPage, anchorTime: z.string().regex(/^[0-9]{1,12}$/) }).strict(), scopes, 'GET', a => ({ path: `${root(a)}/events`, query: { anchor_time: a.anchorTime, user_id_type: 'open_id' }, page: true })),
+  endpoint('calendar_events_get', 'Read one explicit event.', z.object(event).strict(), scopes, 'GET', a => ({ path: `${root(a)}/events/${e(a.eventId)}` })),
+  endpoint('calendar_events_create', 'Create a private event without attendees or notifications.', z.object({ ...calendar, ...fields }).strict(), scopes, 'POST', a => ({ path: `${root(a)}/events`, body: { summary: a.summary, description: a.description, start_time: a.start_time, end_time: a.end_time, visibility: 'private', need_notification: false }, lock: root(a) })),
+  endpoint('calendar_events_update', 'Replace event title, description and times. Does not add attendees; notifications disabled.', z.object({ ...event, ...fields }).strict(), scopes, 'PATCH', a => ({ path: `${root(a)}/events/${e(a.eventId)}`, body: { summary: a.summary, description: a.description, start_time: a.start_time, end_time: a.end_time, need_notification: false }, lock: root(a) })),
+  endpoint('calendar_events_delete', 'Delete one explicit event with notifications disabled.', z.object(event).strict(), scopes, 'DELETE', a => ({ path: `${root(a)}/events/${e(a.eventId)}`, query: { need_notification: false }, lock: root(a) })),
+  endpoint('calendar_freebusy', 'Read availability for one explicitly identified user over at most 90 days. Does not create an event.', z.object({ userId: idSchema, timeMin: z.iso.datetime({ offset: true }), timeMax: z.iso.datetime({ offset: true }) }).strict().refine(a => { const d = Date.parse(a.timeMax) - Date.parse(a.timeMin); return d > 0 && d <= 90 * 86400000; }, 'Use an ascending window of at most 90 days.'), scopes, 'POST', a => ({ path: '/calendar/v4/freebusy/list', query: { user_id_type: 'open_id' }, body: { user_id: a.userId, time_min: a.timeMin, time_max: a.timeMax } }), false),
+];

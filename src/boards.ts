@@ -58,7 +58,7 @@ export class Boards {
   async nodes(input: z.input<typeof readBoardSchema>, signal?: AbortSignal) {
     const { boardId, limit, offset } = readBoardSchema.parse(input);
     const data = await this.api.request('GET', `/board/v1/whiteboards/${boardId}/nodes`,
-      z.object({ nodes: z.array(z.record(z.string(), z.unknown())) }), { scopes: [BOARD_SCOPES[1]], signal });
+      z.object({ nodes: z.array(z.record(z.string(), z.unknown())).nullish().transform(value => value ?? []) }), { scopes: [BOARD_SCOPES[1]], signal });
     const nodes = data.nodes.slice(offset, offset + limit);
     return { boardId, nodes, totalNodes: data.nodes.length,
       ...(offset + nodes.length < data.nodes.length ? { nextOffset: offset + nodes.length } : {}),

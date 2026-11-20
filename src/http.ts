@@ -5,6 +5,7 @@ import type { Session } from './credentials.js';
 import { MEDIA_UPLOAD_SCOPES } from './document-images.js';
 
 export type Fetch = typeof globalThis.fetch;
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 export async function boundedBytes(response: Response, maximum = 2_000_000): Promise<Buffer> {
   const reader = response.body?.getReader();
   if (!reader) throw new AppError('INVALID_RESPONSE', 'Provider returned no body.');
@@ -39,7 +40,7 @@ export class FeishuHttp {
   private lastRequest = 0;
   constructor(private readonly getSession: () => Promise<Session>, private readonly fetcher: Fetch = fetch,
     private readonly spacingMs = 400) {}
-  async request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, schema: z.ZodType<T>,
+  async request<T>(method: HttpMethod, path: string, schema: z.ZodType<T>,
     options: RequestOptions = {}): Promise<T> {
     return schema.parse(await this.perform(method, path, options));
   }
@@ -55,7 +56,7 @@ export class FeishuHttp {
     this.mediaQueue = task.then(() => {}, () => {});
     return task;
   }
-  private async perform(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string,
+  private async perform(method: HttpMethod, path: string,
     options: RequestOptions, binary = false): Promise<unknown> {
     if (!path.startsWith('/') || path.startsWith('//') || /[\r\n\\]/.test(path)) throw new AppError('INVALID_ENDPOINT', 'Only fixed Feishu API paths are permitted.');
     const url = new URL('https://open.feishu.cn/open-apis' + path);
@@ -103,7 +104,8 @@ export class FeishuHttp {
       }
       if (!response.ok || body.code !== 0) {
         throw new AppError(response.status === 401 ? 'LOGIN_REQUIRED' : retryable ? 'RATE_OR_PROVIDER_ERROR' : 'FEISHU_ERROR',
-          'Feishu rejected the request. Check user scopes and resource permissions; no identity fallback was attempted.',
+          body.code === 1069302 ? 'Feishu content review rejected this comment/reply. No automatic retry or identity fallback was attempted.'
+            : 'Feishu rejected the request. Check user scopes and resource permissions; no identity fallback was attempted.',
           { code: body.code, httpStatus: response.status, ...(body.error?.log_id ? { requestId: body.error.log_id } : {}),
             ...(body.error?.permission_violations ? { requiredScopes: body.error.permission_violations.map(v => v.subject) } : {}) });
       }

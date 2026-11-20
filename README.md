@@ -1,8 +1,8 @@
 # better-feishu-mcp
 
-A local TypeScript MCP that uses **your Feishu identity** to read messages and online Sheets, and create/read/update/delete modern Feishu documents. Built from scratch against Feishu APIs—not a wrapper around another Feishu MCP or CLI.
+A local TypeScript MCP that uses **your Feishu identity** for messages, Docs, Sheets, Drive, Base, Wiki, calendars and task-related operations. Built from scratch against Feishu APIs—not a wrapper around another Feishu MCP or CLI.
 
-**Local alpha.** Real stdio-client message reads and a disposable-document CRUD cycle have passed on the tested Feishu China account. No remote hosting or public package/repository exists. License selection is pending; the package is private.
+**Local alpha (0.2.0).** Real stdio-client message reads and disposable-resource productivity tests have passed on the tested Feishu China account, with the limitations below. No remote hosting or public npm package exists. License selection is pending; the package is private.
 
 - **No bot membership in chats.** App/bot registration may be required; adding the bot to a chat is not part of this implementation.
 - **No tenant-token fallback.** Unsupported or missing user access fails explicitly.
@@ -70,7 +70,7 @@ BETTER_FEISHU_MCP_BROWSER=Zen node dist/cli.js login --document-images --documen
 
 The local form lists the complete requested scope set before consent. Extra scopes are bounded, validated and deduplicated; if Feishu omits an explicitly requested extra grant, login fails without replacing the previous local credential record. App enablement/review and employee OAuth consent are separate: `--scope` does not bypass either, and **a grant does not implement a new MCP tool**. Preserve extra `--scope` arguments on subsequent explicit reauthorizations; routine refresh reuses the returned grant set.
 
-The optional [productivity permission pack](docs/permission-packs/productivity-user-scopes.json) records 62 extra scopes: 59 newly added review-free user grants plus three previously enabled board/media grants. This classification was checked in the authorized app console on 2026-11-20 and is **not a universal Feishu approval exemption**. The pack includes user-scoped content changes, deletion and broad calendar management, but excludes document-sharing administration, tenant-token grants, HR/attendance/organization administration, and user-send/document-search grants absent from the review-free results. Nothing loads the pack automatically. Many corresponding APIs/tools still need implementation and live validation.
+The optional [productivity permission pack](docs/permission-packs/productivity-user-scopes.json) records 62 extra scopes: 59 newly added review-free user grants plus three previously enabled board/media grants. This classification was checked in the authorized app console on 2026-11-20 and is **not a universal Feishu approval exemption**. The pack includes user-scoped content changes, deletion and broad calendar management, but excludes document-sharing administration, tenant-token grants, HR/attendance/organization administration, and user-send/document-search grants absent from the review-free results. Nothing loads the pack automatically. See [productivity coverage and live limits](docs/productivity-coverage.md) for implemented versus live-validated capabilities.
 
 ## Connect an MCP client
 
@@ -114,7 +114,26 @@ Client configuration formats differ; the important fields are command, args and 
 
 Group history/get/search have passed live tests in the sole-user fixture chat with bot absence verified in the Feishu UI. P2p, thread and normal multi-person group cases remain unverified; scope support does not override tenant or resource restrictions.
 
-### Online Sheets (read-only)
+### Productivity tools (0.2.0)
+
+| Tool family | Supported operations |
+|---|---|
+| `sheets_*` | Create, read metadata/tabs/ranges, overwrite exact ranges, opt-in formulas, rename, create/update/delete tabs |
+| `drive_*` | Root/explicit-file metadata, create folders, copy/move/shortcuts, bounded upload/download, asynchronous import/export/status/download |
+| `base_*` | Create/read Base; table/field/record CRUD; filtered record search; view listing |
+| `wiki_spaces_*`, `wiki_nodes_*` | Space list/read/private creation; node list/create/rename/move/copy |
+| `comments_*` | Whole-document text comments, resolve/reopen, reply/create/update/delete |
+| `boards_delete_nodes` | Delete explicit native nodes; existing board creation/read tools remain |
+| `calendars_*`, `calendar_events_*`, `calendar_freebusy` | Calendar/event CRUD, paginated discovery, explicit-user availability |
+| `tasks_*`, `tasklists_*`, `task_*` | Task/tasklist reads; comment/section/custom-field operations; attachment list/upload/delete |
+| `chats_members`, `messages_reactions_*`, `messages_pin/unpin`, `messages_pins_list` | Member reads, reactions and pins; not message sending |
+| `documents_media_download` | Bounded media download to a new explicit local path |
+
+All mutations **and local downloads** require `BETTER_FEISHU_MCP_ENABLE_WRITES=1`; read tools remain available without it. New tools use explicit tokens/IDs, not URLs (existing document/Sheets read tools retain their link support). Uploads/downloads are limited to 5 MB and canonical absolute paths; existing destinations are never overwritten. Failed downloads may leave an empty/partial target. Native Base field values and task custom-field settings are bounded data, not arbitrary API requests. Lists return opaque identity/query-bound cursors; calendar lists use the provider's minimum page size of 50. Async jobs must be polled explicitly; a ticket is not completion.
+
+**Known limits:** no verified board-node update API is exposed. Document reply creation was rejected by Feishu content review (`1069302`); reply update/delete remain fixture-tested only. Wiki writes, task ancillary writes, chat mutations and media downloads have not been live-validated. This is not arbitrary content-format round-tripping, document sharing administration, task creation/completion, message sending or document search. See the [coverage record](docs/productivity-coverage.md) before relying on a capability.
+
+### Online Sheets
 
 Enable the user scope `sheets:spreadsheet:readonly` in your Feishu app, then log in again using your existing app. Same-account reauthorization is picked up automatically by running MCP processes; reconnect after rebuilding to discover the tools. Existing tokens do not gain the scope automatically. Whether app/tenant approval is required must be checked in your app console; it has not been verified for this scope. No permission settings are changed automatically.
 
@@ -133,13 +152,13 @@ Enable the user scope `sheets:spreadsheet:readonly` in your Feishu app, then log
 
 Use explicit ascending A1 cell ranges (or a single cell), not tab titles, whole rows/columns or an entire sheet. Reads are capped at 10000 cells, 2 MB provider responses and 512 KB MCP results; request a smaller range if a byte limit is exceeded. Trailing empty cells may be omitted, and typed/rich cell values are preserved as returned by Feishu. `valueRenderOption` defaults to `FormattedValue`; `UnformattedValue`, `Formula` and `ToString` are also available. Dates request formatted strings. Feishu's API does not support calculated cross-sheet reference or array formula results.
 
-All tools use only your user token and existing resource access, mark spreadsheet content as untrusted, and are available with writes disabled. No sheet writes, Base/Bitable access, Excel attachment parsing or sheet search is included. Metadata/tab/range APIs and real MCP stdio are tested with synthetic data; **live Sheets reads remain unverified** pending authorization and a target spreadsheet.
+Read tools use only your user token and existing resource access, mark spreadsheet content as untrusted, and are available with writes disabled. Creation, metadata/tab/range reads, renaming, native formula writes (result `2` read back for `=1+1`) and tab create/update/delete passed disposable-resource live tests on 2026-11-20 with the reviewed narrow grants, despite legacy documentation listing broader scopes. `sheets_write` requires an exact rectangle and `allowFormulas: true` for formula strings. No Excel attachment parsing or sheet search is included.
 
 ### Wiki links
 
-The document read tools (`documents_get/read/blocks`) and all Sheets tools accept `https://<tenant>.feishu.cn/wiki/<node>` links. Wiki is a wrapper, not a legacy document format: the server resolves the node through the Wiki API, checks its underlying type, then reads the actual Docx or Sheet with the same user token. Passing a Wiki Sheet to a Docx reader (or vice versa) gives an explicit type mismatch instead of pretending the link is a legacy format.
+The document read tools (`documents_get/read/blocks`) and Sheets read tools accept `https://<tenant>.feishu.cn/wiki/<node>` links. Wiki is a wrapper, not a legacy document format: the server resolves the node through the Wiki API, checks its underlying type, then reads the actual Docx or Sheet with the same user token. Passing a Wiki Sheet to a Docx reader (or vice versa) gives an explicit type mismatch instead of pretending the link is a legacy format.
 
-Enable the minimal user scope **`wiki:node:read`**, then reauthorize your existing login. Broader existing `wiki:wiki:readonly`/`wiki:wiki` grants are also accepted. Resource ACLs still apply, and app/tenant approval requirements for the new scope have not been live-verified. No bot membership, Wiki search or Wiki writes are added. Direct links/IDs do not require the Wiki scope. For document writes, use the resolved `document_id` returned by the read tools, so a prepared write is bound to the actual document rather than a Wiki wrapper. Legacy `/doc/`, Base and unsupported underlying types still fail explicitly. Wiki resolution is tested with synthetic APIs and real stdio, not a live authorized Wiki node yet.
+Enable the minimal user scope **`wiki:node:read`**, then reauthorize your existing login. Broader existing `wiki:wiki:readonly`/`wiki:wiki` grants are also accepted. Resource ACLs still apply. Direct links/IDs do not require the Wiki scope. For document writes, use the resolved `document_id` returned by the read tools, so the write targets the actual document rather than a Wiki wrapper. Legacy `/doc/`, Base and unsupported underlying types still fail explicitly in these readers. Wiki resolution is tested with synthetic APIs and real stdio, not a live authorized Wiki node yet. Separate `wiki_spaces_*`/`wiki_nodes_*` management tools use their reviewed scopes; space listing passed live validation, while writes remain fixture-tested only.
 
 ### Message attachments
 

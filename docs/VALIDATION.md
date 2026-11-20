@@ -1,6 +1,16 @@
 # Feishu API validation — 2026-11-04
 
-Status: **live API validation passed for the tested app/user/tenant**. The original API proof below was followed by a built local MCP and real stdio-client validation, described next. This is a local alpha, not a public production release.
+Status: **live API validation passed for the tested workflows/app/user/tenant**, not every tool. The original API proof below was followed by a built local MCP and real stdio-client validation. This is a local alpha, not a production-readiness claim.
+
+## Productivity implementation — 0.2.0, 2026-11-20
+
+Added 88 focused tools, with unchanged user authentication and write opt-in. See the [scope/capability manifest](productivity-coverage.md) for exact implemented/live-tested/blocked boundaries. Automated validation covers 204 tests across 13 files plus five historical auth-harness tests, credential-free stdio smoke, and real-stdio discovery/annotations with writes enabled and disabled.
+
+`node scripts/productivity-live.mjs --live-disposable` exercised only newly created content: Base app/table/field/record operations and views, Sheets metadata/tabs/ranges/renaming/native formula result readback, Drive folder/copy/move/shortcut/upload/download/import/export, comments create/list/resolve, private calendar/event lifecycle, current-user availability, and board-node deletion/empty-board readback. Space/task/tasklist list reads also passed. Provider replies rejected comment reply creation with content-review code **1069302**; no automatic retry or identity fallback was used, and the live runner correctly exited nonzero. Reply update/delete were not live-validated. Wiki writes, task ancillary writes, chat mutations and document-media downloads remain fixture-tested only. No verified board-node update endpoint was found, so none is exposed.
+
+The final local report at `.runtime/productivity-live.json` is dated `2026-11-20T06:14:14.894Z`. All five top-level cleanup requests succeeded (Docx, new folder with disposable descendants, Base, Sheet and calendar); recycling is not permanent erasure or confirmation of asynchronous folder deletion completion. Retained user documents/team resources were not mutated. A separate real stdio live run (`npm run test:stdio -- --live --live-crud`) passed discovery, token-free diagnostics, existing fixture message reads, disposable document create/update/readback/delete and post-delete inaccessibility.
+
+Live tests found and corrected the provider's minimum calendar page size (50), native formula-object encoding instead of literal text, and omitted/null node arrays on empty boards. Legacy Sheets documentation lists broader scopes, but reviewed narrow grants succeeded on this account; other tenants remain subject to their own policy. The new build is ready for MCP-client reconnect to load its expanded tool catalog; existing process tool catalogs are not hot-reloaded by token refresh.
 
 ## Persistent-login validation — 2026-11-20
 

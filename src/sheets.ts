@@ -23,7 +23,8 @@ export const cellRangeSchema = z.string().max(32).regex(/^[A-Z]{1,3}[1-9][0-9]{0
   return end.row >= start.row && end.column >= start.column && (end.row - start.row + 1) * (end.column - start.column + 1) <= 10_000;
 }, 'Use an ascending, explicit A1 cell range of at most 10000 cells.');
 export const renderSchema = z.enum(['FormattedValue', 'UnformattedValue', 'Formula', 'ToString']);
-const scopes = [['sheets:spreadsheet:readonly', 'sheets:spreadsheet', 'drive:drive:readonly', 'drive:drive']] as const;
+const scopes = [['sheets:spreadsheet:read', 'sheets:spreadsheet:readonly', 'sheets:spreadsheet', 'drive:drive:readonly', 'drive:drive']] as const;
+const metaScopes = [[...scopes[0], 'sheets:spreadsheet.meta:read']] as const;
 const metadata = z.object({ spreadsheet: z.object({ token: idSchema, title: z.string(), url: z.string().optional(), owner_id: z.string().optional() }) });
 const tabs = z.object({ sheets: z.array(z.object({
   sheet_id: idSchema, title: z.string(), index: z.number().int(), hidden: z.boolean().optional(), resource_type: z.string().optional(),
@@ -37,7 +38,7 @@ export class Sheets {
   constructor(private readonly api: FeishuHttp) {}
   async metadata(id: string, signal?: AbortSignal) {
     const token = await resolveWiki(this.api, spreadsheetSchema.parse(id), 'sheet', signal);
-    const data = await this.api.request('GET', `/sheets/v3/spreadsheets/${encodeURIComponent(token)}?user_id_type=open_id`, metadata, { scopes, signal });
+    const data = await this.api.request('GET', `/sheets/v3/spreadsheets/${encodeURIComponent(token)}?user_id_type=open_id`, metadata, { scopes: metaScopes, signal });
     return { spreadsheet: data.spreadsheet, untrustedData: true };
   }
   async tabs(id: string, signal?: AbortSignal) {

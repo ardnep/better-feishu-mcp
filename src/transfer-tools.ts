@@ -1,0 +1,11 @@
+import { z } from 'zod';
+import { idSchema } from './core.js';
+import { encode as e, endpoint, type ProductivityTool } from './productivity.js';
+import { localPath } from './transfers.js';
+export const transferTools: ProductivityTool[] = [
+  endpoint('drive_upload', 'Upload an explicit canonical local regular file (at most 5 MB) into an explicit folder. No URLs or automatic retry.', z.object({ path: localPath, folderToken: idSchema }).strict(), ['drive:file:upload'], 'POST', a => ({ path: '/drive/v1/files/upload_all', upload: { path: a.path, fields: { parent_type: 'explorer', parent_node: a.folderToken }, sizeField: true }, lock: 'drive-upload' })),
+  endpoint('drive_download', 'Download an explicit Drive file, at most 5 MB, to a new canonical absolute path. Never overwrite; failures may retain a partial target.', z.object({ fileToken: idSchema, destination: localPath }).strict(), ['drive:file:download'], 'GET', a => ({ path: `/drive/v1/files/${e(a.fileToken)}/download`, download: a.destination, lock: 'local-download' }), true),
+  endpoint('drive_export_download', 'Download a completed export file token from the fixed Feishu API, at most 5 MB, to a new path. Never follows returned URLs.', z.object({ fileToken: idSchema, destination: localPath }).strict(), ['docs:document:export'], 'GET', a => ({ path: `/drive/v1/export_tasks/file/${e(a.fileToken)}/download`, download: a.destination, lock: 'local-download' }), true),
+  endpoint('documents_media_download', 'Download explicit document media, at most 5 MB, to a new canonical absolute path; never overwrite.', z.object({ fileToken: idSchema, destination: localPath }).strict(), ['docs:document.media:download'], 'GET', a => ({ path: `/drive/v1/medias/${e(a.fileToken)}/download`, download: a.destination, lock: 'local-download' }), true),
+  endpoint('task_attachments_upload', 'Upload a canonical local regular file (at most 5 MB) as an attachment to an explicit task.', z.object({ path: localPath, taskId: idSchema }).strict(), ['task:attachment:write'], 'POST', a => ({ path: '/task/v2/attachments/upload', query: { user_id_type: 'open_id' }, upload: { path: a.path, fields: { resource_type: 'task', resource_id: a.taskId } }, lock: 'task-attachments' })),
+];

@@ -1,8 +1,8 @@
 {
   "name": "better-feishu-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Local, user-identity Feishu MCP: message reads and safe Docs CRUD.",
+  "description": "Local, user-identity Feishu MCP for Docs, Sheets, Drive, Base, Wiki, calendars, tasks and chat reads.",
   "type": "module",
   "license": "UNLICENSED",
   "engines": {

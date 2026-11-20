@@ -7,6 +7,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runtime, status } from '../src/server.js';
 import { BOARD_SCOPES } from '../src/boards.js';
+import { productivityTools } from '../src/productivity-tools.js';
 import { fakeFetch, json, MemoryStore, session, setup } from './helpers.js';
 
 async function connection(writes = false, documentImages = false, documentBoards = false, legacyApprovals = false) {
@@ -177,6 +178,7 @@ it('discovers read tools over real stdio, keeps writes/sending/search-docs absen
     const list = await f.client.listTools(); const names = list.tools.map(t => t.name);
     expect(names).toContain('messages_search'); expect(names).toContain('documents_read'); expect(names).toContain('boards_get_nodes');
     expect(names).not.toContain('operations_commit');
+    for (const tool of productivityTools) expect(names.includes(tool.name)).toBe(!tool.write);
     for (const name of ['documents_create', 'documents_update', 'documents_delete', 'documents_add_board']) expect(names).not.toContain(name);
     expect(names.some(n => /send|approve|documents_search/.test(n))).toBe(false);
     const status = output(await f.client.callTool({ name: 'auth_status', arguments: {} }));
@@ -191,6 +193,7 @@ it('writes documents directly over real stdio without local approvals', async ()
   try {
     const tools = (await f.client.listTools()).tools;
     expect(tools.some(t => /documents_prepare_|operations_/.test(t.name))).toBe(false);
+    for (const tool of productivityTools) expect(tools.find(t => t.name === tool.name)?.annotations).toMatchObject({ readOnlyHint: !tool.write, idempotentHint: !tool.write });
     expect(output(await f.client.callTool({ name: 'auth_status', arguments: {} }))).toMatchObject({ documentWriteMode: 'direct', legacyApprovalToolsEnabled: false });
     await expect(f.client.callTool({ name: 'documents_prepare_create', arguments: { title: 'not exposed' } })).rejects.toThrow('not found');
     for (const name of ['documents_create', 'documents_update', 'documents_delete']) {
