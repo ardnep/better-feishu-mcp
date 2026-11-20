@@ -14,6 +14,16 @@ Attachment metadata is now included in message reads, with `messages_read_attach
 
 Validation: `npm run check`, `npm test` (40 tests), `npm run test:auth-harness` (5 tests), `npm run test:stdio`, and `npm audit --omit=dev` (zero known vulnerabilities). This does **not** establish live Feishu resource access: live attachment reads were not exercised, and no attachments were uploaded/sent for this change. No new scopes or client configuration changes were made. Reconnect/restart the MCP process after rebuilding.
 
+### Native flowchart-board implementation — 2026-11-09
+
+Added `documents_add_board` for a revision-checked Docx append followed by Mermaid import as native editable nodes, plus `boards_get_nodes` for bounded readback. `login --document-boards` explicitly requests board-create/read user scopes; default login scopes are unchanged. No new dependency or generic authenticated HTTP tool was added.
+
+`npm test` passed **94 tests in 12 files**, including real stdio creation/readback against a synthetic provider. Coverage checks user-only credentials, write/scope gates before mutation, stale revisions, source/ID/page validation, non-retried failed imports, uncertain creation, recovery IDs and untrusted node reads. Run the OAuth callback test only when no interactive login is waiting: both bind the registered local callback port.
+
+The user authorized both board user-token scopes. After rebuilding and reconnecting the MCP, `documents_add_board` appended the requested PCB task flowchart to the newly created task document. `boards_get_nodes` verified **27 native nodes: 15 shapes and 12 connectors**, including the extraction-clearance and support-before-release guards. A subsequent document-block read verified the embedded board token. No other document was changed or deleted. Visual rendering, shared-document races and live partial-failure recovery remain unverified.
+
+The requested revision was created as a second board and verified before removing the original: **55 nodes, including nine decision diamonds, 12 action shapes, three terminators and 31 connectors**. Removal used a one-off, user-authorized Docx block API call with an observed revision and exact old-block check; no board editing/deletion tool was added. Final document readback confirmed exactly one embedded board. In-place node/source editing remains outside the MCP feature scope.
+
 ## Verified
 
 | Capability | Live evidence |

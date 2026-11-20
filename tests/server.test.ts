@@ -6,11 +6,13 @@ import { spawn, spawnSync } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runtime } from '../src/server.js';
+import { BOARD_SCOPES } from '../src/boards.js';
 import { fakeFetch, json, MemoryStore, session, setup } from './helpers.js';
 
-async function connection(writes = false, documentImages = false) {
+async function connection(writes = false, documentImages = false, documentBoards = false) {
   const env = await setup(writes); const credentials = session();
   if (documentImages) credentials.scopes.push('docs:document.media:upload');
+  if (documentBoards) credentials.scopes.push(...BOARD_SCOPES);
   const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('./fixtures/server.mjs', import.meta.url))],
     env: { ...process.env, BETTER_FEISHU_MCP_PROFILE: 'test', BETTER_FEISHU_MCP_STATE_DIR: env.config.stateDir,
       BETTER_FEISHU_MCP_ENABLE_WRITES: writes ? '1' : '0', TEST_SESSION_JSON: JSON.stringify(credentials) }, stderr: 'pipe' });
@@ -49,6 +51,7 @@ it('only accepts confidential auth mode and documents it as the default in CLI h
   const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
   const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
   expect(help.status).toBe(0); expect(help.stdout).toContain('always uses confidential-client');
+  expect(help.stdout).toContain('--document-boards');
   const denied = spawnSync(process.execPath, [cli, 'login', '--app-id', 'cli_synthetic', '--auth-mode', 'pkce', '--no-open'], { encoding: 'utf8' });
   expect(denied.status).toBe(1); expect(denied.stderr).toContain('INVALID_AUTH_MODE');
 });
@@ -126,9 +129,9 @@ it('discovers read tools over real stdio, keeps writes/sending/search-docs absen
   const f = await connection();
   try {
     const list = await f.client.listTools(); const names = list.tools.map(t => t.name);
-    expect(names).toContain('messages_search'); expect(names).toContain('documents_read');
+    expect(names).toContain('messages_search'); expect(names).toContain('documents_read'); expect(names).toContain('boards_get_nodes');
     expect(names).not.toContain('operations_commit');
-    for (const name of ['documents_create', 'documents_update', 'documents_delete']) expect(names).not.toContain(name);
+    for (const name of ['documents_create', 'documents_update', 'documents_delete', 'documents_add_board']) expect(names).not.toContain(name);
     expect(names.some(n => /send|approve|documents_search/.test(n))).toBe(false);
     const status = output(await f.client.callTool({ name: 'auth_status', arguments: {} }));
     expect(status.loggedIn).toBe(true); expect(status.accessToken).toBeUndefined(); expect(status.appSecret).toBeUndefined();
@@ -224,4 +227,34 @@ it('creates native document images directly over stdio without a local approval'
     } });
     expect(result.isError).not.toBe(true); expect(output(result).documentId).toBe('fixtureDoc');
   } finally { await f.close(); }
+});
+it('creates and reads native editable flowchart boards over real stdio', async () => {
+  const f = await connection(true, false, true);
+  try {
+    const tools = (await f.client.listTools()).tools;
+    expect(tools.find(t => t.name === 'documents_add_board')?.annotations).toMatchObject({ readOnlyHint: false, idempotentHint: false });
+    const added = await f.client.callTool({ name: 'documents_add_board', arguments: { documentId: 'fixtureDoc', revision: 1, mermaid: 'flowchart TD\nA[Locate]-->B[Grasp]' } });
+    expect(added.isError).not.toBe(true);
+    expect(output(added)).toMatchObject({ boardId: 'b'.repeat(27), blockId: 'fixtureBlock0', editable: true });
+    const read = await f.client.callTool({ name: 'boards_get_nodes', arguments: { boardId: output(added).boardId } });
+    expect(read.isError).not.toBe(true); expect(output(read)).toMatchObject({ totalNodes: 1, untrustedData: true });
+    expect(f.stderr()).not.toContain('synthetic-user-token');
+  } finally { await f.close(); }
+});
+it('exposes board reads with writes disabled and reports missing board permissions over stdio', async () => {
+  const readOnly = await connection(false, false, true);
+  try {
+    const tools = (await readOnly.client.listTools()).tools;
+    expect(tools.find(t => t.name === 'boards_get_nodes')?.annotations?.readOnlyHint).toBe(true);
+    expect(tools.some(t => t.name === 'documents_add_board')).toBe(false);
+    const read = await readOnly.client.callTool({ name: 'boards_get_nodes', arguments: { boardId: 'b'.repeat(27) } });
+    expect(read.isError).not.toBe(true); expect(output(read).untrustedData).toBe(true);
+  } finally { await readOnly.close(); }
+  const missingScope = await connection(true);
+  try {
+    const result = await missingScope.client.callTool({ name: 'documents_add_board', arguments: {
+      documentId: 'fixtureDoc', revision: 1, mermaid: 'flowchart TD\nA-->B',
+    } });
+    expect(result.isError).toBe(true); expect(output(result).error.kind).toBe('MISSING_SCOPE');
+  } finally { await missingScope.close(); }
 });
