@@ -3,6 +3,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type ServerResponse } from 'node:http';
 import { AppError, BASE_SCOPES, type AuthMode, type Settings, withLock } from './core.js';
 import { MEDIA_UPLOAD_SCOPE } from './document-images.js';
+import { BOARD_SCOPES } from './boards.js';
 import { type CredentialStore, type Session, sessionSchema } from './credentials.js';
 import { boundedJson, type Fetch } from './http.js';
 
@@ -12,10 +13,10 @@ const tokenSchema = z.object({ code: z.literal(0), access_token: z.string().min(
   refresh_token: z.string().optional(), refresh_token_expires_in: z.number().positive().optional() });
 const identitySchema = z.object({ code: z.literal(0), data: z.object({ open_id: z.string().min(1), tenant_key: z.string().min(1) }) });
 export function equal(a: string | null, b: string) { return !!a && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b)); }
-export function authorize(appId: string, mode: AuthMode = 'confidential', offline = true, documentImages = false) {
+export function authorize(appId: string, mode: AuthMode = 'confidential', offline = true, documentImages = false, documentBoards = false) {
   z.literal('confidential').parse(mode);
   const state = randomBytes(32).toString('base64url');
-  const scopes = [...BASE_SCOPES, ...(offline ? ['offline_access'] : []), ...(documentImages ? [MEDIA_UPLOAD_SCOPE] : [])];
+  const scopes = [...BASE_SCOPES, ...(offline ? ['offline_access'] : []), ...(documentImages ? [MEDIA_UPLOAD_SCOPE] : []), ...(documentBoards ? BOARD_SCOPES : [])];
   const url = new URL('https://accounts.feishu.cn/open-apis/authen/v1/authorize');
   url.search = new URLSearchParams({ client_id: appId, response_type: 'code', redirect_uri: CALLBACK,
     scope: scopes.join(' '), state, prompt: 'consent' }).toString();
@@ -59,11 +60,11 @@ function send(res: ServerResponse, status: number, content: string) {
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'" });
   res.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>better-feishu-mcp login</title><style>:root{color-scheme:light}body{font:16px/1.6 system-ui;background:#f5f5f1;color:#202a28;max-width:650px;margin:60px auto;padding:24px}main{background:white;padding:28px;border-radius:14px}input{box-sizing:border-box;width:100%;padding:10px;margin:6px 0 18px}button{background:#21634c;color:white;padding:12px 22px;border:0;border-radius:6px}small{color:#65706b}</style><main>${content}</main></html>`);
 }
-export async function login(options: { config: Settings; store: CredentialStore; appId: string; mode?: AuthMode; offline: boolean; documentImages?: boolean;
+export async function login(options: { config: Settings; store: CredentialStore; appId: string; mode?: AuthMode; offline: boolean; documentImages?: boolean; documentBoards?: boolean;
   replace: boolean; onReady: (url: string) => void; fetcher?: Fetch }): Promise<void> {
   const { config, store, appId, mode = 'confidential' } = options;
   const fetcher = options.fetcher ?? fetch;
-  const flow = authorize(appId, mode, options.offline, options.documentImages);
+  const flow = authorize(appId, mode, options.offline, options.documentImages, options.documentBoards);
   const entry = '/' + randomBytes(24).toString('base64url');
   const csrf = randomBytes(32).toString('base64url'); const origin = new URL(CALLBACK).origin;
   let secret = ''; let started = false; let consumed = false; const deadline = Date.now() + 600_000;

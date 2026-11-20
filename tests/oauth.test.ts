@@ -1,6 +1,7 @@
 import { it, expect } from 'vitest';
 import { authorize, CALLBACK, equal, login, refreshSession } from '../src/oauth.js';
 import { BASE_SCOPES } from '../src/core.js';
+import { BOARD_SCOPES } from '../src/boards.js';
 import { MemoryStore, fakeFetch, session, setup } from './helpers.js';
 
 it('uses confidential-client auth by default and never adds PKCE parameters', () => {
@@ -19,20 +20,27 @@ it('requests document-media upload only through explicit opt-in', () => {
   expect(flow.scopes).toEqual([...BASE_SCOPES, 'offline_access', 'docs:document.media:upload']);
   expect(new URL(flow.url).searchParams.get('scope')).toContain('docs:document.media:upload');
 });
+it('requests board create/read scopes only through explicit opt-in', () => {
+  for (const scope of BOARD_SCOPES) expect(authorize('cli_synthetic').scopes).not.toContain(scope);
+  const flow = authorize('cli_synthetic', 'confidential', false, true, true);
+  expect(flow.scopes).toEqual([...BASE_SCOPES, 'docs:document.media:upload', ...BOARD_SCOPES]);
+  expect(new URL(flow.url).searchParams.get('scope')?.split(' ')).toEqual(flow.scopes);
+});
 it.each(['temporary', 'persistent', 'missing-token', 'missing-expiry', 'missing-scope'] as const)('runs a protected %s login callback without silently losing persistent login', async variant => {
   const offline = variant !== 'temporary'; const rejected = !['temporary', 'persistent'].includes(variant);
   const { config, cleanup } = await setup(); const previous = session({ refreshToken: 'existing-refresh', refreshExpiresAt: Date.now() + 100000 });
   const store = new MemoryStore(previous);
   let ready!: (url: string) => void; const opening = new Promise<string>(resolve => { ready = resolve; });
-  const finished = login({ config, store, appId: 'cli_synthetic', offline, replace: false, onReady: ready,
+  const finished = login({ config, store, appId: 'cli_synthetic', offline, documentBoards: true, replace: false, onReady: ready,
     fetcher: fakeFetch((url, init) => {
       if (url.pathname.endsWith('/token')) {
         const payload = JSON.parse(String(init.body));
         expect(payload.client_secret).toBe('synthetic-local-input');
         expect(payload.redirect_uri).toBe(CALLBACK); expect(payload.code_verifier).toBeUndefined();
         expect(payload.scope.split(' ').includes('offline_access')).toBe(offline);
+        for (const scope of BOARD_SCOPES) expect(payload.scope.split(' ')).toContain(scope);
         return new Response(JSON.stringify({ code: 0, access_token: 'synthetic-user-token', expires_in: 3600,
-          scope: [...BASE_SCOPES, ...(offline && variant !== 'missing-scope' ? ['offline_access'] : [])].join(' '),
+          scope: [...BASE_SCOPES, ...BOARD_SCOPES, ...(offline && variant !== 'missing-scope' ? ['offline_access'] : [])].join(' '),
           ...(variant !== 'missing-token' ? { refresh_token: 'synthetic-refresh' } : {}),
           ...(variant !== 'missing-expiry' ? { refresh_token_expires_in: 10000 } : {}) }));
       }
@@ -73,6 +81,7 @@ it.each(['temporary', 'persistent', 'missing-token', 'missing-expiry', 'missing-
     expect(duplicate.headers.get('location')).toBe(response.headers.get('location'));
     expect(store.value).toMatchObject({ appId: 'cli_synthetic', userId: 'ou_synthetic', tenantId: 'tenant_synthetic', authMode: 'confidential' });
     expect(store.value?.refreshToken).toBe(offline ? 'synthetic-refresh' : undefined);
+    for (const scope of BOARD_SCOPES) expect(store.value?.scopes).toContain(scope);
   } finally { await cleanup(); }
 });
 it('refresh rotates credentials and checks user identity', async () => {

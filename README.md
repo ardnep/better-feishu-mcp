@@ -94,6 +94,7 @@ Client configuration formats differ; the important fields are command, args and 
 | `documents_get` | Modern Docx metadata and revision, including Wiki links |
 | `documents_read` | Plain text capped at 100000 characters |
 | `documents_blocks` | Structured blocks with opaque, revision-bound cursors |
+| `boards_get_nodes` | Bounded local pages of native board nodes; requires board-read scope |
 | `sheets_get` | Spreadsheet metadata from a token, direct Sheets link or Wiki link |
 | `sheets_list` | Tab IDs, titles, visibility and grid sizes |
 | `sheets_read` | Explicit cell-range reads, up to 10000 cells |
@@ -190,7 +191,41 @@ node /absolute/path/to/better-feishu-mcp/dist/cli.js approve OPERATION_ID --prof
 
 No MCP tool can approve a legacy draft. Its approval signatures are bound to payload, target, expiry and login identity using a key held in the OS keychain. Relogin invalidates prior drafts. A model-supplied `confirm: true` is not accepted. This optional process is not required by `documents_create`, `documents_update` or `documents_delete`.
 
-Content creation supports paragraphs, headings, bullets, ordered lists, quotes, code blocks and the inline images described below. Basic paragraph create/read/replace/delete is live-tested; other block types are contract/unit-tested only. No lossless Markdown round trip, table editing, existing-image replacement, Wiki lifecycle or legacy Docs claim. Replacing a block's text replaces its rich-text elements; unrelated blocks are left alone. Revision preflight is **best-effort**, not an atomic multi-user transaction guarantee.
+Content creation supports paragraphs, headings, bullets, ordered lists, quotes, code blocks and the inline images described below. The separate `documents_add_board` tool appends native flowchart boards. Basic paragraph create/read/replace/delete is live-tested; other block types are contract/unit-tested only. No lossless Markdown round trip, table editing, existing-image replacement, Wiki lifecycle or legacy Docs claim. Replacing a block's text replaces its rich-text elements; unrelated blocks are left alone. Revision preflight is **best-effort**, not an atomic multi-user transaction guarantee.
+
+### Native editable flowchart boards
+
+Enable these **user-token** scopes in the Feishu app, then explicitly reauthorize the existing profile:
+
+- `board:whiteboard:node:create`
+- `board:whiteboard:node:read`
+
+```sh
+node dist/cli.js login --app-id cli_YOUR_APP_ID --document-boards
+```
+
+Preserve any existing `--document-images` choice. Persistent renewal is the default; use `--temporary` only if renewal is unwanted. Board scopes are not requested by default; enabling them does not enable writes. Keep `BETTER_FEISHU_MCP_ENABLE_WRITES=1` for creation and reconnect after rebuilding to discover the tools.
+
+1. Create or read the target Docx, then call `documents_blocks` for its current revision.
+2. Call `documents_add_board` with the document ID, observed revision and Mermaid source:
+
+```json
+{
+  "documentId": "DOCUMENT_ID",
+  "revision": 2,
+  "mermaid": "flowchart TD\n A[Locate PCB] --> B[Grasp]\n B -->|Grasp confirmed| C[Extract]"
+}
+```
+
+3. Use the returned `boardId` with `boards_get_nodes`. Alternatively, find `board.token` in a document block with `block_type: 43`. Reads accept `limit` (1–100, default 50) and `offset` (default 0); continue with `nextOffset` when returned.
+
+Only Mermaid `flowchart`/`graph` source with a direction is accepted, up to 32000 characters, without Markdown fences. Feishu imports **editable native shapes and connectors**, not a static image. Edit those shapes in Feishu; source replacement and node editing/deletion are not implemented by these tools. Default board dimensions adapt to the document/content.
+
+Creation appends one board, then imports its diagram. It is **not transactional**: syntax errors, cancellation or network failures can leave an empty or populated board. Full syntax is checked by Feishu, not parsed locally. Errors include known document/block/board IDs for inspection; neither stage is automatically retried or rolled back. Do not blindly repeat an uncertain append. Existing document contents are preserved, with the same per-document lock and best-effort revision preflight as other direct writes.
+
+Node reads use the same user identity, resource ACLs, 2 MB upstream-response and 512 KB MCP-output bounds. Feishu returns the whole board; tool pages are local slices and are not a revision-bound snapshot. Board content is untrusted data. On 2026-11-09, the connected MCP appended a PCB task flowchart to a live Docx, then created a revised flowchart with explicit decisions. Readback verified the final native board block and 55 nodes, including nine decision diamonds. Visual layout and live failure recovery remain unverified.
+
+Primary API references: [Docx board blocks](https://open.feishu.cn/document/ukTMukTMukTM/uUDN04SN0QjL1QDN/document-docx/docx-v1/data-structure/block), [Mermaid import](https://open.feishu.cn/document/ukTMukTMukTM/uUDN04SN0QjL1QDN/board-v1/whiteboard-node/create_plantuml), [node reads](https://open.feishu.cn/document/ukTMukTMukTM/uUDN04SN0QjL1QDN/board-v1/whiteboard-node/list).
 
 ### Inline document images
 
