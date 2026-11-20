@@ -1,6 +1,6 @@
 // Real SDK client -> built CLI over stdio. No network by default.
 // --live opts into existing-user fixture reads. --live-crud additionally authorizes
-// this trusted test runner to sign operations ONLY for its newly created fixture.
+// direct writes ONLY to this runner's newly created disposable fixture, with no approval drafts.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -9,7 +9,6 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { settings } from '../dist/core.js';
 import { KeychainStore } from '../dist/credentials.js';
-import { runtime } from '../dist/server.js';
 
 const flags = new Set(process.argv.slice(2));
 for (const flag of flags) assert.ok(['--live', '--live-crud'].includes(flag), 'Unknown test flag');
@@ -20,10 +19,10 @@ const config = settings({ ...process.env, BETTER_FEISHU_MCP_ENABLE_WRITES: crud 
 const store = new KeychainStore(config.profile);
 const session = live ? await store.load() : null;
 if (live) assert.ok(session, 'Log in with the built CLI before running live tests');
-const approver = live ? runtime(config, store).operations : null;
 const transport = new StdioClientTransport({ command: process.execPath,
   args: [fileURLToPath(new URL('../dist/cli.js', import.meta.url)), 'serve', '--stdio'],
-  env: { ...process.env, BETTER_FEISHU_MCP_PROFILE: config.profile, BETTER_FEISHU_MCP_ENABLE_WRITES: crud ? '1' : '0' }, stderr: 'pipe' });
+  env: { ...process.env, BETTER_FEISHU_MCP_PROFILE: config.profile, BETTER_FEISHU_MCP_ENABLE_WRITES: crud ? '1' : '0',
+    BETTER_FEISHU_MCP_ENABLE_LEGACY_APPROVALS: '0' }, stderr: 'pipe' });
 let stderr = ''; transport.stderr?.on('data', chunk => { stderr += String(chunk); });
 const client = new Client({ name: 'better-feishu-mcp-stdio-validation', version: '0.1.0' });
 const checks = []; let cleanupDocument;
@@ -37,16 +36,10 @@ async function call(name, args = {}) {
   }
   return data;
 }
-async function commit(draft) {
-  assert.ok(crud && approver, 'Fixture approvals require explicit --live-crud');
-  await approver.approve(draft.operationId);
-  return call('operations_commit', { operationId: draft.operationId });
-}
 async function cleanup() {
   if (!cleanupDocument) return;
   const meta = await call('documents_get', { documentId: cleanupDocument });
-  const deletion = await call('documents_prepare_delete', { documentId: cleanupDocument, revision: meta.revision_id });
-  const deleted = await commit(deletion); assert.equal(deleted.deleted, true);
+  const deleted = await call('documents_delete', { documentId: cleanupDocument, revision: meta.revision_id }); assert.equal(deleted.deleted, true);
   const deletedId = cleanupDocument;
   cleanupDocument = undefined; checks.push('docs_delete_to_recycle_bin');
   const probe = await client.callTool({ name: 'documents_get', arguments: { documentId: deletedId } });
@@ -60,7 +53,7 @@ try {
   assert.ok(tools.includes('messages_search') && tools.includes('documents_read'));
   assert.ok(['sheets_get', 'sheets_list', 'sheets_read', 'boards_get_nodes'].every(name => tools.includes(name)));
   assert.ok(!tools.some(t => /send|documents_search|operations_approve/.test(t)));
-  assert.equal(tools.includes('operations_commit'), crud); checks.push('stdio_discovery_and_tool_policy');
+  assert.ok(!tools.some(t => /documents_prepare_|operations_/.test(t))); checks.push('stdio_discovery_and_tool_policy');
   for (const name of ['documents_create', 'documents_update', 'documents_delete', 'documents_add_board']) assert.equal(tools.includes(name), crud);
   const status = await call('auth_status'); assert.equal(status.loggedIn, live);
   assert.ok(!('accessToken' in status) && !('appSecret' in status)); checks.push('token_free_status');
@@ -79,16 +72,15 @@ try {
     assert.ok(JSON.stringify(message.items).includes('better-feishu-mcp API validation fixture')); checks.push('fixture_message_get_and_content');
     if (crud) {
       const before = 'better-feishu-mcp stdio fixture ' + randomBytes(8).toString('hex'); const after = before + ' updated';
-      const draft = await call('documents_prepare_create', { title: 'better-feishu-mcp disposable stdio test', content: [{ type: 'paragraph', text: before }] });
-      const denied = await client.callTool({ name: 'operations_commit', arguments: { operationId: draft.operationId } });
-      assert.equal(denied.isError, true); assert.equal(decode(denied).error.kind, 'APPROVAL_REQUIRED'); checks.push('live_unapproved_write_denied');
-      const created = await commit(draft); cleanupDocument = created.documentId; assert.ok(cleanupDocument); checks.push('docs_create_with_content');
+       assert.equal(status.documentWriteMode, 'direct'); assert.equal(status.legacyApprovalToolsEnabled, false);
+       const created = await call('documents_create', { title: 'better-feishu-mcp disposable stdio test', content: [{ type: 'paragraph', text: before }] });
+       cleanupDocument = created.documentId; assert.ok(cleanupDocument); checks.push('docs_create_without_local_approval');
       const read = await call('documents_read', { documentId: cleanupDocument }); assert.ok(read.text.includes(before)); checks.push('docs_read');
       const structured = await call('documents_blocks', { documentId: cleanupDocument, limit: 20 });
       const block = structured.blocks.find(b => b.block_type === 2 && JSON.stringify(b).includes(before)); assert.ok(block?.block_id); checks.push('docs_read_blocks');
-      const edit = await call('documents_prepare_update', { documentId: cleanupDocument, revision: structured.document.revision_id,
-        change: { type: 'replace_text', blockId: block.block_id, text: after } });
-      await commit(edit); checks.push('docs_targeted_update');
+       await call('documents_update', { documentId: cleanupDocument, revision: structured.document.revision_id,
+         change: { type: 'replace_text', blockId: block.block_id, text: after } });
+       checks.push('docs_targeted_update_without_local_approval');
       const reread = await call('documents_read', { documentId: cleanupDocument }); assert.ok(reread.text.includes(after)); checks.push('docs_verify_update');
       await cleanup();
     }

@@ -9,13 +9,14 @@ import { runtime, status } from '../src/server.js';
 import { BOARD_SCOPES } from '../src/boards.js';
 import { fakeFetch, json, MemoryStore, session, setup } from './helpers.js';
 
-async function connection(writes = false, documentImages = false, documentBoards = false) {
+async function connection(writes = false, documentImages = false, documentBoards = false, legacyApprovals = false) {
   const env = await setup(writes); const credentials = session();
   if (documentImages) credentials.scopes.push('docs:document.media:upload');
   if (documentBoards) credentials.scopes.push(...BOARD_SCOPES);
   const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('./fixtures/server.mjs', import.meta.url))],
     env: { ...process.env, BETTER_FEISHU_MCP_PROFILE: 'test', BETTER_FEISHU_MCP_STATE_DIR: env.config.stateDir,
-      BETTER_FEISHU_MCP_ENABLE_WRITES: writes ? '1' : '0', TEST_SESSION_JSON: JSON.stringify(credentials) }, stderr: 'pipe' });
+      BETTER_FEISHU_MCP_ENABLE_WRITES: writes ? '1' : '0', BETTER_FEISHU_MCP_ENABLE_LEGACY_APPROVALS: legacyApprovals ? '1' : '0',
+      TEST_SESSION_JSON: JSON.stringify(credentials) }, stderr: 'pipe' });
   let stderr = ''; transport.stderr?.on('data', chunk => { stderr += String(chunk); });
   const client = new Client({ name: 'better-feishu-mcp-test', version: '0.1.0' });
   await client.connect(transport);
@@ -189,6 +190,9 @@ it('writes documents directly over real stdio without local approvals', async ()
   const f = await connection(true);
   try {
     const tools = (await f.client.listTools()).tools;
+    expect(tools.some(t => /documents_prepare_|operations_/.test(t.name))).toBe(false);
+    expect(output(await f.client.callTool({ name: 'auth_status', arguments: {} }))).toMatchObject({ documentWriteMode: 'direct', legacyApprovalToolsEnabled: false });
+    await expect(f.client.callTool({ name: 'documents_prepare_create', arguments: { title: 'not exposed' } })).rejects.toThrow('not found');
     for (const name of ['documents_create', 'documents_update', 'documents_delete']) {
       expect(tools.find(t => t.name === name)?.annotations).toMatchObject({ readOnlyHint: false, idempotentHint: false });
     }
@@ -200,20 +204,34 @@ it('writes documents directly over real stdio without local approvals', async ()
       expect(updated.isError).not.toBe(true); expect(output(updated).changed).toBe(true);
     }
     const tooMany = [...content, content[0]];
-    for (const name of ['documents_create', 'documents_prepare_create']) {
+    for (const name of ['documents_create']) {
       expect((await f.client.callTool({ name, arguments: { title: 'oversize', content: tooMany } })).isError).toBe(true);
     }
-    for (const name of ['documents_update', 'documents_prepare_update']) {
+    for (const name of ['documents_update']) {
       expect((await f.client.callTool({ name, arguments: { documentId: 'fixtureDoc', revision: 1, change: { type: 'append', content: tooMany } } })).isError).toBe(true);
     }
     const deleted = await f.client.callTool({ name: 'documents_delete', arguments: { documentId: 'fixtureDoc', revision: 1 } });
     expect(deleted.isError).not.toBe(true); expect(output(deleted).deleted).toBe(true);
   } finally { await f.close(); }
 });
+it('never exposes legacy or direct mutation tools when writes are disabled, even with legacy opt-in', async () => {
+  const f = await connection(false, false, false, true);
+  try {
+    const names = (await f.client.listTools()).tools.map(t => t.name);
+    expect(names.some(name => /documents_(create|update|delete|add_board|prepare_)|operations_/.test(name))).toBe(false);
+    expect(output(await f.client.callTool({ name: 'auth_status', arguments: {} }))).toMatchObject({ documentWriteMode: 'disabled', legacyApprovalToolsEnabled: false });
+  } finally { await f.close(); }
+});
 it('blocks optional legacy MCP commit without local approval; signed approval works once over real stdio', async () => {
-  const f = await connection(true);
+  const f = await connection(true, false, false, true);
   try {
     const draft = output(await f.client.callTool({ name: 'documents_prepare_create', arguments: { title: 'fixture' } }));
+    expect(output(await f.client.callTool({ name: 'auth_status', arguments: {} }))).toMatchObject({ documentWriteMode: 'direct', legacyApprovalToolsEnabled: true });
+    expect((await f.client.listTools()).tools.some(t => t.name === 'documents_create')).toBe(true);
+    const tooMany = Array.from({ length: 51 }, () => ({ type: 'paragraph', text: 'x' }));
+    expect((await f.client.callTool({ name: 'documents_prepare_create', arguments: { title: 'oversize', content: tooMany } })).isError).toBe(true);
+    expect((await f.client.callTool({ name: 'documents_prepare_update', arguments: { documentId: 'fixtureDoc', revision: 1,
+      change: { type: 'append', content: tooMany } } })).isError).toBe(true);
     const denied = await f.client.callTool({ name: 'operations_commit', arguments: { operationId: draft.operationId } });
     expect(denied.isError).toBe(true); expect(output(denied).error.kind).toBe('APPROVAL_REQUIRED');
     const trustedLocalApprover = runtime(f.config, new MemoryStore(f.credentials));
@@ -245,7 +263,7 @@ it('reads text and native image attachments over real MCP stdio', async () => {
   } finally { await f.close(); }
 });
 it('prepares and commits native document images over real stdio with an exact local approval', async () => {
-  const f = await connection(true, true);
+  const f = await connection(true, true, false, true);
   try {
     const imagePath = join(f.config.stateDir, 'example.png');
     await writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));

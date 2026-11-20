@@ -7,7 +7,7 @@ A local TypeScript MCP that uses **your Feishu identity** to read messages and o
 - **No bot membership in chats.** App/bot registration may be required; adding the bot to a chat is not part of this implementation.
 - **No tenant-token fallback.** Unsupported or missing user access fails explicitly.
 - **No message sending or document search.** Those scopes required approval and are excluded.
-- **Writes off by default.** When enabled, direct document tools use your existing login, without per-edit terminal approval. The old approval workflow remains optional.
+- **Writes off by default.** When enabled, direct document tools use your existing login, without per-document authorization or per-edit terminal approval. Legacy approval tools are hidden unless explicitly opted into.
 
 For a scannable light-mode overview, open [setup and current status](docs/review/setup.html). See [security boundaries](SECURITY.md) before use.
 
@@ -150,7 +150,7 @@ Message get/history/thread/search results now include an `attachments` array, wh
 
 Each read re-fetches the source message to verify the resource key/type. It uses the existing message-read scopes and **only your user token**; resource ACLs and tenant policy can still deny access. All attachment contents are untrusted data. PDF/DOCX parsing runs in a time/heap-limited worker, not an OS sandbox.
 
-Attachment functionality is covered by synthetic API tests, actual PDF/DOCX parsing fixtures and real MCP stdio tests; **live Feishu attachment access is not yet validated**. After rebuilding, reconnect/restart your MCP client/server to discover the new tool.
+Attachment functionality is covered by synthetic API tests, actual PDF/DOCX parsing fixtures and real MCP stdio tests. **Live user-token Markdown download/parsing, ZIP listing and ZIP-entry reading passed in one authorized group on 2026-11-20**, including a file from another participant. This does not validate live images, PDF/DOCX, DMs or native uploads; see [validation evidence](docs/VALIDATION.md). After rebuilding, reconnect/restart your MCP client/server to discover the new tool.
 
 For a ZIP, first use the normal attachment request with `type: "file"`; then add, for example, `"archiveEntry": "notes/readme.md"` to read that entry. Each call revalidates the attachment against its source message before downloading. ZIP processing uses the same time/heap-limited worker as document extraction; archive filenames and contents remain untrusted data, never instructions.
 
@@ -168,7 +168,7 @@ Enabling writes gives the connected MCP client permission to mutate documents ac
 
 #### Optional legacy prepare/approve/commit workflow
 
-For clients that still use exact local approvals, the following tools remain available with writes enabled:
+Legacy approval tools are **not exposed by default**, so ordinary clients cannot accidentally select the old approval path. For compatibility, set both `BETTER_FEISHU_MCP_ENABLE_WRITES=1` and `BETTER_FEISHU_MCP_ENABLE_LEGACY_APPROVALS=1` in the server environment and reconnect. Only then are these tools exposed:
 
 - `documents_prepare_create`: title, optional parent folder, optional structured content.
 - `documents_prepare_update`: observed revision plus one append or text-block replacement.
@@ -190,6 +190,15 @@ node /absolute/path/to/better-feishu-mcp/dist/cli.js approve OPERATION_ID --prof
 ```
 
 No MCP tool can approve a legacy draft. Its approval signatures are bound to payload, target, expiry and login identity using a key held in the OS keychain. Relogin invalidates prior drafts. A model-supplied `confirm: true` is not accepted. This optional process is not required by `documents_create`, `documents_update` or `documents_delete`.
+
+#### If you still see an approval prompt
+
+- A terminal `approve OPERATION_ID` command belongs to the legacy workflow. Use the direct tools instead; reconnect after upgrading to remove legacy tools from discovery by default.
+- An AI-client “Allow tool” prompt is a separate client permission, not a Feishu login or document approval. Configure only the intended tools in that client; the MCP cannot override client or organization policy.
+- Feishu “request access” means the employee lacks access to that resource. OAuth does not bypass document ACLs or tenant policies.
+- Reading the observed revision before an update/deletion is a conflict check, not an approval step.
+
+`auth_status` reports `documentWriteMode` and `legacyApprovalToolsEnabled` without exposing credentials.
 
 Content creation supports paragraphs, headings, bullets, ordered lists, quotes, code blocks and the inline images described below. The separate `documents_add_board` tool appends native flowchart boards. Basic paragraph create/read/replace/delete is live-tested; other block types are contract/unit-tested only. No lossless Markdown round trip, table editing, existing-image replacement, Wiki lifecycle or legacy Docs claim. Replacing a block's text replaces its rich-text elements; unrelated blocks are left alone. Revision preflight is **best-effort**, not an atomic multi-user transaction guarantee.
 
@@ -285,7 +294,7 @@ No `search:docs:read`, `im:message.send_as_user` or tenant-token access is reque
 - Automated tests exercise schema validation, credential rotation/races, scope gates, HTTP limits, approval integrity/replay/expiry, revision conflicts and real SDK stdio calls.
 - `npm run test:stdio` runs a credential-free real-client smoke test.
 - `npm run test:stdio -- --live` reads only the known temporary group fixture through a real client.
-- `npm run test:stdio -- --live --live-crud` additionally authorizes the **trusted test runner** to approve and mutate only its newly created disposable document, then delete it. It verifies unapproved writes are rejected first; it does not simulate a human at the CLI. Never use unreviewed test scripts with credentials.
+- `npm run test:stdio -- --live --live-crud` additionally authorizes direct create/read/edit/delete operations on only the runner's newly created disposable document, with legacy tools explicitly disabled. It verifies that normal document writes need no local approval. Never use unreviewed test scripts with credentials.
 - [Live evidence and limits](docs/VALIDATION.md), [plan](docs/PLAN.md), [original research](docs/reports/Feishu%20MCP%20feasibility%20and%20architecture.md).
 
 The package remains `private: true` / `UNLICENSED` pending the user's license decision. No public release, remote, client configuration edit, external deployment or security audit is implied by local tests passing.

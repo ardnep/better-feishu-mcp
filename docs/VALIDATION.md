@@ -8,6 +8,18 @@ Persistent renewal is now the default; `--temporary` explicitly selects non-rene
 
 Live reauthorization returned renewable credentials. A controlled probe treated the loaded access token as expired to exercise the normal `SessionManager.token()` rotation path without waiting for natural expiry. Exactly one refresh succeeded, rotated the refresh token, preserved app/user/tenant and login binding, and saved active credentials in the OS keychain. A second token request reused those credentials without another rotation; a read-only chat-list API call succeeded. The already-running MCP independently observed the renewed, unexpired credentials without restart. No live content was changed. Natural long-duration expiry, revoked authorization, and network/crash recovery remain unverified.
 
+## Direct document writes without approval — 2026-11-20
+
+Legacy prepare/commit tools are now hidden by default and exposed only when writes and `BETTER_FEISHU_MCP_ENABLE_LEGACY_APPROVALS=1` are both enabled. Direct tools retain user scopes, resource ACLs, revision preflight, image checks and write opt-in. Explicitly enabled legacy drafts still require exact CLI approval and cannot be replayed. Client tool-permission prompts are separate from this server workflow.
+
+The integrated build passed 102 tests across 12 files. The real-stdio live CRUD runner, with legacy tools explicitly disabled, discovered only direct write tools, created a disposable document, read its text/blocks, replaced one text block without local approval, verified readback, deleted that same fixture to the recycle bin and verified it was inaccessible. All 13 reported checks passed; no pre-existing document was changed. The fixture needed no pending cleanup.
+
+## Live attachment reads — 2026-11-20
+
+At the user's request, the running MCP read existing attachments in one authorized group using its existing user login. A Markdown file from another participant downloaded and parsed successfully (5,725 bytes; not truncated). A ZIP uploaded by the authorized user downloaded successfully (13,525 bytes); listing returned 15 entries and 22,787 bytes of declared expansion, and an exact `README.md` entry read returned 1,199 bytes of untruncated text. The tool rechecked message/resource binding before each download. No attachment bodies or resource identifiers are retained in this validation record; nothing was uploaded, executed, extracted or saved to disk.
+
+The adapter uses the authorized user access token for fixed-origin GETs, with no tenant-token fallback. This establishes working user-token Markdown and ZIP listing/entry reads for the tested app/user/tenant/group despite the reviewed public download reference listing tenant-token support only. It does not establish all-format or all-chat support: images, PDF/DOCX, DMs, other tenants and native uploads remain unverified live.
+
 ## Built MCP validation
 
 The built CLI completed identity-bound OAuth and stored credentials in the macOS keychain. A real SDK client launched `dist/cli.js serve --stdio` in a separate process, discovered the expected tool policy, read the temporary chat fixture, rejected an unapproved write, then completed document creation with content, text/block reads, targeted replacement and readback, deletion and a post-delete read confirming a deleted/not-found error. The disposable document needed no pending cleanup.

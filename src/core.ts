@@ -44,11 +44,12 @@ export const BASE_SCOPES = [
   'wiki:node:read',
 ] as const;
 export type AuthMode = 'confidential';
-export type Settings = Readonly<{ profile: string; stateDir: string; writes: boolean }>;
+export type Settings = Readonly<{ profile: string; stateDir: string; writes: boolean; legacyApprovals?: boolean }>;
 export function settings(env: NodeJS.ProcessEnv = process.env): Settings {
   return Object.freeze({ profile: profileSchema.parse(env.BETTER_FEISHU_MCP_PROFILE ?? 'default'),
     stateDir: env.BETTER_FEISHU_MCP_STATE_DIR ?? join(homedir(), '.local', 'state', 'better-feishu-mcp'),
-    writes: env.BETTER_FEISHU_MCP_ENABLE_WRITES === '1' });
+    writes: env.BETTER_FEISHU_MCP_ENABLE_WRITES === '1',
+    legacyApprovals: env.BETTER_FEISHU_MCP_ENABLE_LEGACY_APPROVALS === '1' });
 }
 export async function privateDir(path: string) {
   await mkdir(path, { recursive: true, mode: 0o700 });

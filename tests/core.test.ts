@@ -19,6 +19,9 @@ describe('input and policy boundaries', () => {
     expect(settings({}).writes).toBe(false);
     expect(settings({ BETTER_FEISHU_MCP_ENABLE_WRITES: 'true' }).writes).toBe(false);
     expect(settings({ BETTER_FEISHU_MCP_ENABLE_WRITES: '1' }).writes).toBe(true);
+    expect(settings({}).legacyApprovals).toBe(false);
+    expect(settings({ BETTER_FEISHU_MCP_ENABLE_LEGACY_APPROVALS: 'true' }).legacyApprovals).toBe(false);
+    expect(settings({ BETTER_FEISHU_MCP_ENABLE_LEGACY_APPROVALS: '1' }).legacyApprovals).toBe(true);
   });
   it('requires AND groups while permitting exact OR alternatives', () => {
     expect(() => requireScopes(['read'], [['read', 'all'], 'group'])).toThrow(AppError);

@@ -34,7 +34,8 @@ Authentication always uses confidential-client mode; no mode selection is needed
 Login requests persistent renewal (offline_access) by default; --offline remains an alias.
 Use --temporary only for a non-renewing session that requires login after expiry.
 Writes require BETTER_FEISHU_MCP_ENABLE_WRITES=1 on the server; direct tools use the existing login.
-The optional prepare/commit workflow still requires local approval.
+Legacy prepare/commit tools are hidden by default; BETTER_FEISHU_MCP_ENABLE_LEGACY_APPROVALS=1 opts in.
+Only that legacy workflow requires local approval; client tool permissions remain separate.
 Configure callback: ${CALLBACK}`); return;
   }
   const config = settings({ ...process.env, ...(values.profile ? { BETTER_FEISHU_MCP_PROFILE: values.profile } : {}) });
