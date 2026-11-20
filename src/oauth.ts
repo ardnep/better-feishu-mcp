@@ -12,7 +12,7 @@ const tokenSchema = z.object({ code: z.literal(0), access_token: z.string().min(
   refresh_token: z.string().optional(), refresh_token_expires_in: z.number().positive().optional() });
 const identitySchema = z.object({ code: z.literal(0), data: z.object({ open_id: z.string().min(1), tenant_key: z.string().min(1) }) });
 export function equal(a: string | null, b: string) { return !!a && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b)); }
-export function authorize(appId: string, mode: AuthMode = 'confidential', offline = false, documentImages = false) {
+export function authorize(appId: string, mode: AuthMode = 'confidential', offline = true, documentImages = false) {
   z.literal('confidential').parse(mode);
   const state = randomBytes(32).toString('base64url');
   const scopes = [...BASE_SCOPES, ...(offline ? ['offline_access'] : []), ...(documentImages ? [MEDIA_UPLOAD_SCOPE] : [])];
@@ -76,7 +76,7 @@ export async function login(options: { config: Settings; store: CredentialStore;
       if (req.method === 'GET' && url.pathname === entry && started) return send(res, 200,
         `<h1>Continue signing in</h1><p>Your App Secret was already accepted by this local form. It has not yet been validated by Feishu.</p><p><a href="${escape(flow.url)}">Continue to Feishu consent</a></p>`);
       if (req.method === 'GET' && url.pathname === entry && !started) return send(res, 200,
-        `<h1>Connect Feishu as you</h1><p>App: <code>${escape(appId)}</code> · Profile: ${escape(config.profile)}</p><p>Confidential-client authentication: app secret + state, without PKCE.</p><p>${options.offline ? 'Persistent login requested: offline_access must be enabled in Feishu.' : 'No refresh token requested. Log in again when the session expires; use login --offline for persistent renewal.'}</p><form method="post" action="${entry}/start" autocomplete="off"><input type="hidden" name="csrf" value="${csrf}"><label>App Secret<input type="password" name="secret" required maxlength="512" autocomplete="off"></label><p><small>Stored only in your OS keychain after successful authorization. Selected results will be sent to your configured MCP client/model. No bot will join any chat.</small></p><button>Continue to Feishu consent</button></form>`);
+        `<h1>Connect Feishu as you</h1><p>App: <code>${escape(appId)}</code> · Profile: ${escape(config.profile)}</p><p>Confidential-client authentication: app secret + state, without PKCE.</p><p>${options.offline ? 'Persistent login requested: offline_access must be enabled in Feishu. Credentials renew automatically until refresh authorization expires or is revoked.' : 'Temporary login explicitly selected. No refresh token requested; log in again when the session expires.'}</p><form method="post" action="${entry}/start" autocomplete="off"><input type="hidden" name="csrf" value="${csrf}"><label>App Secret<input type="password" name="secret" required maxlength="512" autocomplete="off"></label><p><small>Stored only in your OS keychain after successful authorization. Selected results will be sent to your configured MCP client/model. No bot will join any chat.</small></p><button>Continue to Feishu consent</button></form>`);
       if (req.method === 'POST' && url.pathname === entry + '/start') {
         if (req.headers.origin !== origin || consumed || Date.now() > deadline) return send(res, 403, 'Invalid origin or expired/reused login.');
         let body = '';
@@ -99,6 +99,9 @@ export async function login(options: { config: Settings; store: CredentialStore;
         const issuedAt = Date.now();
         const tokens = await tokenCall({ grant_type: 'authorization_code', client_id: appId, client_secret: secret,
           code, redirect_uri: CALLBACK, scope: flow.scopes.join(' ') }, fetcher);
+        if (options.offline && (!tokens.refresh_token || !tokens.refresh_token_expires_in || !tokens.scope.split(/\s+/).includes('offline_access'))) {
+          throw new AppError('PERSISTENT_LOGIN_UNAVAILABLE', 'Feishu did not grant renewable credentials. Enable offline_access in the app and authorize again, or explicitly use login --temporary. Existing local credentials were not replaced.');
+        }
         const who = await identity(tokens.access_token, fetcher);
         const next = sessionSchema.parse({ version: 1, region: 'feishu.cn', profile: config.profile, appId, appSecret: secret,
           userId: who.open_id, tenantId: who.tenant_key, loginId: randomUUID(), approvalKey: randomBytes(32).toString('base64url'),

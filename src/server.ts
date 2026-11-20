@@ -26,9 +26,13 @@ export type Runtime = ReturnType<typeof runtime>;
 export async function status(app: Runtime) {
   const session = await app.store.load();
   if (!session) return { loggedIn: false, profile: app.config.profile, writesEnabled: app.config.writes, advice: 'Run better-feishu-mcp login.' };
+  const refreshUsable = !!session.refreshToken && !!session.refreshExpiresAt && session.refreshExpiresAt > Date.now() && session.refreshState === 'active';
+  const loginRequired = session.refreshState === 'uncertain' || (session.expiresAt <= Date.now() + 30_000 && !refreshUsable);
   return { loggedIn: true, profile: app.config.profile, appId: session.appId, userId: session.userId, tenantId: session.tenantId,
     authMode: session.authMode, expiresAt: session.expiresAt, expired: session.expiresAt <= Date.now(), scopes: session.scopes,
     refreshAvailable: !!session.refreshToken, refreshState: session.refreshState, writesEnabled: app.config.writes,
+    refreshUsable, loginRequired, ...(session.refreshExpiresAt ? { refreshExpiresAt: session.refreshExpiresAt } : {}),
+    ...(loginRequired ? { advice: 'Run better-feishu-mcp login to authorize persistent renewal; offline_access must be enabled in Feishu.' } : {}),
     note: 'Granted scopes do not override resource ACLs or tenant policy.' };
 }
 function result(value: unknown, isError = false): CallToolResult {

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { runtime } from '../src/server.js';
+import { runtime, status } from '../src/server.js';
 import { fakeFetch, json, MemoryStore, session, setup } from './helpers.js';
 
 async function connection(writes = false, documentImages = false) {
@@ -24,6 +24,25 @@ function output(response: Awaited<ReturnType<Client['callTool']>>) {
   if (!text || text.type !== 'text') throw new Error('Missing text response');
   return JSON.parse(text.text);
 }
+it('distinguishes stored expired credentials from renewable access without attempting a refresh or exposing secrets', async () => {
+  const env = await setup(false);
+  const store = new MemoryStore();
+  const app = runtime(env.config, store, fakeFetch(() => { throw new Error('Status must not make requests'); }));
+  try {
+    for (const [overrides, refreshUsable, loginRequired] of [
+      [{ expiresAt: 1 }, false, true],
+      [{ expiresAt: 1, refreshToken: 'synthetic-refresh', refreshExpiresAt: Date.now() + 100000 }, true, false],
+      [{ expiresAt: 1, refreshToken: 'synthetic-refresh', refreshExpiresAt: 1 }, false, true],
+      [{ refreshToken: 'synthetic-refresh', refreshExpiresAt: Date.now() + 100000, refreshState: 'uncertain' as const }, false, true],
+    ] as const) {
+      await store.save(session(overrides));
+      const result = await status(app);
+      expect(result).toMatchObject({ loggedIn: true, refreshUsable, loginRequired });
+      expect(JSON.stringify(result)).not.toContain('synthetic-refresh');
+      expect(result).not.toHaveProperty('accessToken'); expect(result).not.toHaveProperty('appSecret');
+    }
+  } finally { await env.cleanup(); }
+});
 it('shares renewed same-account credentials across running MCP instances without another login/restart', async () => {
   const env = await setup(false); const store = new MemoryStore();
   const seenTokens: string[] = [];
@@ -45,10 +64,36 @@ it('shares renewed same-account credentials across running MCP instances without
     await expect(a.messages.groups()).rejects.toMatchObject({ kind: 'LOGIN_REQUIRED' });
   } finally { await env.cleanup(); }
 });
+it('automatically rotates expired user credentials before an API call and reuses the rotated login', async () => {
+  const env = await setup(false);
+  const store = new MemoryStore(session({ expiresAt: 1, refreshToken: 'synthetic-refresh', refreshExpiresAt: Date.now() + 100000 }));
+  let rotations = 0; let reads = 0;
+  const app = runtime(env.config, store, fakeFetch((url, init) => {
+    if (url.pathname.endsWith('/token')) {
+      rotations++;
+      expect(store.value?.refreshState).toBe('uncertain');
+      expect(JSON.parse(String(init.body))).toMatchObject({ grant_type: 'refresh_token', refresh_token: 'synthetic-refresh' });
+      return new Response(JSON.stringify({ code: 0, access_token: 'rotated-access', expires_in: 3600,
+        scope: session().scopes.join(' '), refresh_token: 'rotated-refresh', refresh_token_expires_in: 5000 }));
+    }
+    expect(new Headers(init.headers).get('authorization')).toBe('Bearer rotated-access');
+    if (url.pathname.endsWith('/user_info')) return json({ open_id: 'ou_synthetic', tenant_key: 'tenant_synthetic' });
+    reads++; return json({ items: [], has_more: false });
+  }));
+  try {
+    await app.messages.groups(); await app.messages.groups();
+    expect(rotations).toBe(1); expect(reads).toBe(2);
+    expect(store.value).toMatchObject({ refreshToken: 'rotated-refresh', refreshState: 'active' });
+    expect(await status(app)).toMatchObject({ expired: false, refreshUsable: true, loginRequired: false });
+  } finally { await env.cleanup(); }
+});
 it('only accepts confidential auth mode and documents it as the default in CLI help', () => {
   const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
   const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
   expect(help.status).toBe(0); expect(help.stdout).toContain('always uses confidential-client');
+  expect(help.stdout).toContain('persistent renewal'); expect(help.stdout).toContain('--temporary');
+  const conflict = spawnSync(process.execPath, [cli, 'login', '--offline', '--temporary', '--no-open'], { encoding: 'utf8' });
+  expect(conflict.status).toBe(1); expect(conflict.stderr).toContain('cannot be combined');
   const denied = spawnSync(process.execPath, [cli, 'login', '--app-id', 'cli_synthetic', '--auth-mode', 'pkce', '--no-open'], { encoding: 'utf8' });
   expect(denied.status).toBe(1); expect(denied.stderr).toContain('INVALID_AUTH_MODE');
 });

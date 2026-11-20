@@ -7,7 +7,8 @@ it('uses confidential-client auth by default and never adds PKCE parameters', ()
   const confidential = new URL(authorize('cli_synthetic').url);
   expect(confidential.searchParams.has('code_challenge')).toBe(false);
   expect(confidential.searchParams.has('code_challenge_method')).toBe(false);
-  expect(confidential.searchParams.get('scope')).not.toContain('offline_access');
+  expect(confidential.searchParams.get('scope')).toContain('offline_access');
+  expect(authorize('cli_synthetic', 'confidential', false).scopes).not.toContain('offline_access');
   expect(authorize('cli_synthetic', 'confidential', true).scopes).toContain('offline_access');
   expect(() => authorize('cli_synthetic', 'pkce' as never)).toThrow();
   expect(equal(null, 'x')).toBe(false); expect(equal('x', 'y')).toBe(false);
@@ -18,21 +19,27 @@ it('requests document-media upload only through explicit opt-in', () => {
   expect(flow.scopes).toEqual([...BASE_SCOPES, 'offline_access', 'docs:document.media:upload']);
   expect(new URL(flow.url).searchParams.get('scope')).toContain('docs:document.media:upload');
 });
-it('runs a protected local login callback and saves only an identity-bound credential record', async () => {
-  const { config, cleanup } = await setup(); const store = new MemoryStore(null);
+it.each(['temporary', 'persistent', 'missing-token', 'missing-expiry', 'missing-scope'] as const)('runs a protected %s login callback without silently losing persistent login', async variant => {
+  const offline = variant !== 'temporary'; const rejected = !['temporary', 'persistent'].includes(variant);
+  const { config, cleanup } = await setup(); const previous = session({ refreshToken: 'existing-refresh', refreshExpiresAt: Date.now() + 100000 });
+  const store = new MemoryStore(previous);
   let ready!: (url: string) => void; const opening = new Promise<string>(resolve => { ready = resolve; });
-  const finished = login({ config, store, appId: 'cli_synthetic', offline: false, replace: false, onReady: ready,
+  const finished = login({ config, store, appId: 'cli_synthetic', offline, replace: false, onReady: ready,
     fetcher: fakeFetch((url, init) => {
       if (url.pathname.endsWith('/token')) {
         const payload = JSON.parse(String(init.body));
         expect(payload.client_secret).toBe('synthetic-local-input');
         expect(payload.redirect_uri).toBe(CALLBACK); expect(payload.code_verifier).toBeUndefined();
-        return new Response(JSON.stringify({ code: 0, access_token: 'synthetic-user-token', expires_in: 3600, scope: BASE_SCOPES.join(' '),
-          refresh_token: 'unsolicited-refresh-must-be-discarded', refresh_token_expires_in: 10000 }));
+        expect(payload.scope.split(' ').includes('offline_access')).toBe(offline);
+        return new Response(JSON.stringify({ code: 0, access_token: 'synthetic-user-token', expires_in: 3600,
+          scope: [...BASE_SCOPES, ...(offline && variant !== 'missing-scope' ? ['offline_access'] : [])].join(' '),
+          ...(variant !== 'missing-token' ? { refresh_token: 'synthetic-refresh' } : {}),
+          ...(variant !== 'missing-expiry' ? { refresh_token_expires_in: 10000 } : {}) }));
       }
       expect(url.pathname).toBe('/open-apis/authen/v1/user_info');
       return new Response(JSON.stringify({ code: 0, data: { open_id: 'ou_synthetic', tenant_key: 'tenant_synthetic' } }));
     }) });
+  const outcome = finished.then(() => null, error => error);
   try {
     const start = await opening; const origin = new URL(start).origin;
     const page = await fetch(start); expect(page.headers.get('referrer-policy')).toBe('same-origin');
@@ -53,11 +60,19 @@ it('runs a protected local login callback and saves only an identity-bound crede
     const authorization = new URL(response.headers.get('location')!);
     const callback = new URL(CALLBACK); callback.search = new URLSearchParams({ code: 'synthetic-code', state: authorization.searchParams.get('state')! }).toString();
     const completed = await fetch(callback);
-    expect(completed.status).toBe(200); await completed.text(); await finished;
+    expect(completed.status).toBe(rejected ? 400 : 200); const completion = await completed.text();
+    const error = await outcome;
+    if (rejected) {
+      expect(error).toMatchObject({ kind: 'PERSISTENT_LOGIN_UNAVAILABLE' });
+      expect(completion).toContain('Existing local credentials were not replaced');
+      expect(store.value).toEqual(previous);
+      return;
+    }
+    expect(error).toBeNull();
     expect(duplicate.status).toBe(303);
     expect(duplicate.headers.get('location')).toBe(response.headers.get('location'));
     expect(store.value).toMatchObject({ appId: 'cli_synthetic', userId: 'ou_synthetic', tenantId: 'tenant_synthetic', authMode: 'confidential' });
-    expect(store.value?.refreshToken).toBeUndefined();
+    expect(store.value?.refreshToken).toBe(offline ? 'synthetic-refresh' : undefined);
   } finally { await cleanup(); }
 });
 it('refresh rotates credentials and checks user identity', async () => {

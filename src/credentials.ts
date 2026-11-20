@@ -58,7 +58,7 @@ export class SessionManager {
       if (session.refreshState === 'uncertain') throw new AppError('LOGIN_REQUIRED', 'A prior refresh had an uncertain outcome. Log in again; do not retry a single-use refresh token.');
       if (session.expiresAt > Date.now() + 30_000) return session;
       if (!session.refreshToken || !this.refresh || !session.refreshExpiresAt || session.refreshExpiresAt <= Date.now()) {
-        throw new AppError('LOGIN_REQUIRED', 'User access expired. Log in again. Persistent login needs an explicit offline_access grant.');
+        throw new AppError('LOGIN_REQUIRED', 'User access expired and no usable refresh credentials are available. Run better-feishu-mcp login; enable offline_access in Feishu for persistent renewal.');
       }
       // Atomic keychain record update before the network call: crash/timeout fails closed.
       await this.store.save({ ...session, refreshState: 'uncertain' });

@@ -12,7 +12,7 @@ import { createServer, runtime, status, VERSION } from './server.js';
 
 const { positionals, values } = parseArgs({ allowPositionals: true, strict: true, options: {
   profile: { type: 'string' }, 'app-id': { type: 'string' }, 'auth-mode': { type: 'string' },
-  offline: { type: 'boolean' }, 'document-images': { type: 'boolean' }, replace: { type: 'boolean' }, 'no-open': { type: 'boolean' },
+  offline: { type: 'boolean' }, temporary: { type: 'boolean' }, 'document-images': { type: 'boolean' }, replace: { type: 'boolean' }, 'no-open': { type: 'boolean' },
   stdio: { type: 'boolean' }, 'probe-keychain': { type: 'boolean' }, version: { type: 'boolean' }, help: { type: 'boolean' },
 } });
 async function main() {
@@ -22,7 +22,7 @@ async function main() {
     console.log(`better-feishu-mcp ${VERSION}
 
 Commands:
-  login --app-id cli_... [--offline] [--document-images] [--replace] [--no-open]
+  login --app-id cli_... [--temporary] [--document-images] [--replace] [--no-open]
   status
   doctor [--probe-keychain]
   logout
@@ -31,6 +31,8 @@ Commands:
 
 All commands accept --profile <name>. No secrets on argv. Feishu China only.
 Authentication always uses confidential-client mode; no mode selection is needed.
+Login requests persistent renewal (offline_access) by default; --offline remains an alias.
+Use --temporary only for a non-renewing session that requires login after expiry.
 Writes require BETTER_FEISHU_MCP_ENABLE_WRITES=1 on the server; direct tools use the existing login.
 The optional prepare/commit workflow still requires local approval.
 Configure callback: ${CALLBACK}`); return;
@@ -65,11 +67,12 @@ Configure callback: ${CALLBACK}`); return;
       keychainWriteProbe: !!values['probe-keychain'], callback: CALLBACK, region: 'Feishu China', ...loggedIn }, null, 2)); return;
   }
   if (command === 'login') {
+    if (values.offline && values.temporary) throw new AppError('INVALID_ARGUMENT', '--offline and --temporary cannot be combined.');
     const appId = z.string().regex(/^cli_[A-Za-z0-9]+$/).parse(values['app-id'] ?? (await store.load())?.appId);
     // Retain the old confidential flag as a compatible alias; PKCE is no longer supported.
     if (values['auth-mode'] !== undefined && values['auth-mode'] !== 'confidential') throw new AppError('INVALID_AUTH_MODE', 'Only confidential-client authentication is supported. Omit --auth-mode.');
     const mode = 'confidential' as const;
-    await login({ config, store, appId, mode, offline: !!values.offline, documentImages: !!values['document-images'], replace: !!values.replace,
+    await login({ config, store, appId, mode, offline: !values.temporary, documentImages: !!values['document-images'], replace: !!values.replace,
       onReady(url) {
         console.log(`Open this local credential form: ${url}`);
         console.log(`Registered callback must be exactly ${CALLBACK}`);
