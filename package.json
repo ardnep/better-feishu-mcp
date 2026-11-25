@@ -4,7 +4,7 @@
   "private": true,
   "description": "Local, user-identity Feishu MCP for messaging, Docs, Sheets, Drive, Base, Wiki, calendars and tasks.",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "AGPL-3.0-or-later",
   "engines": {
     "node": ">=24 <25"
   },

@@ -2,7 +2,7 @@
 
 A local TypeScript MCP server for Feishu, using **your user identity** rather than a bot in your chats.
 
-**Local alpha · 0.2.0.** Feishu China only. No public npm package or remote hosting; license selection is pending.
+**Local alpha · 0.2.0.** Public source under [AGPL-3.0-or-later](LICENSE). Feishu China only; no public npm package or remote hosting.
 
 ## What it does
 
@@ -114,4 +114,4 @@ The MCP `auth_status` tool reports identity, scopes, expiry and write policy wit
 - [Live validation evidence](docs/VALIDATION.md)
 - [Optional permission packs](docs/permission-packs/) — never loaded automatically
 
-Live tests cover selected workflows on one Feishu China account, not every tool or tenant. The package remains private and `UNLICENSED`; local test results do not imply a security audit or production readiness.
+Live tests cover selected workflows on one Feishu China account, not every tool or tenant. Local test results do not imply a security audit or production readiness.
